@@ -1,0 +1,3 @@
+# Publish only the self-contained website. Exclude Git metadata and build files.
+*
+!index.html
