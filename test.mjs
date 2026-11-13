@@ -47,3 +47,28 @@ assert.equal((await recover(recoverySecret)).status,401);
 assert.equal((await recover('Final-private-test-code-123456')).status,200);
 assert.equal((await storage.list({prefix:'admin-reset-used:'})).size,1);
 console.log('PASS: recovery requires the Cloudflare secret, invalidates the old master, preserves buyers/files, and cannot replay after master rotation.');
+
+const caseAdmin=take(await call('login',{role:'admin',code:'Final-private-test-code-123456'}));
+assert.equal((await call('admin/cases')).status,401);
+let publicCases=await(await call('cases')).json();assert.equal(publicCases.cases.length,0);
+const newCase={mode:'create',caseId:'new-mystery',title:'New Mystery',synopsis:'A spoiler-free test description.',status:'draft'};
+assert.equal((await call('admin/cases',newCase,caseAdmin)).status,200);
+assert.equal((await call('admin/cases',newCase,caseAdmin)).status,409);
+assert.equal((await call('admin/cases',{...newCase,caseId:'../invalid'},caseAdmin)).status,400);
+assert.equal((await call('admin/cases',{...newCase,mode:'update',status:'published'},caseAdmin)).status,409);
+assert.equal((await(await call('cases')).json()).cases.length,0);
+r=await call('admin/codes',{caseId:'new-mystery'},caseAdmin);const newBuyerCode=(await r.json()).code;const newBuyerSession=take(await call('login',{code:newBuyerCode}));
+assert.equal((await call('admin/cases',newCase,newBuyerSession)).status,403);
+for(const category of ['instructions','case-file','hints','solution']){const f=new FormData();f.set('caseId','new-mystery');f.set('category',category);f.set('file',new Blob(['%PDF-1.7\nCase test']),'case.pdf');assert.equal((await call('admin/upload',f,caseAdmin)).status,200);}
+assert.equal((await call('admin/cases',{...newCase,mode:'update',status:'published'},caseAdmin)).status,200);
+publicCases=await(await call('cases')).json();assert.equal(publicCases.cases.length,1);assert.deepEqual(Object.keys(publicCases.cases[0]).sort(),['caseId','synopsis','title']);
+const caseFiles=(await(await call('files?case=new-mystery',undefined,caseAdmin)).json()).files;
+assert.equal((await call('admin/delete-file',{caseId:'new-mystery',id:caseFiles[0].id},caseAdmin)).status,409);
+assert.equal((await call('download/new-mystery/'+caseFiles[0].id)).status,401);
+assert.equal((await call('download/new-mystery/'+caseFiles[0].id,undefined,newBuyerSession)).status,200);
+assert.equal((await call('admin/cases',{...newCase,mode:'update',status:'archived'},caseAdmin)).status,200);
+assert.equal((await(await call('cases')).json()).cases.length,0);
+assert.equal((await call('download/new-mystery/'+caseFiles[0].id,undefined,newBuyerSession)).status,200);
+assert.equal((await(await call('me',undefined,newBuyerSession)).json()).caseTitle,'New Mystery');
+assert.equal((await call('admin/codes',{caseId:'unregistered-case'},caseAdmin)).status,400);
+console.log('PASS: case create/edit validation, draft privacy, publication gate, public metadata only, protected PDFs, archival preserving buyer access, case names and unregistered-case rejection.');
