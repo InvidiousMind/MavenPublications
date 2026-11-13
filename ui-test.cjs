@@ -19,7 +19,7 @@ async function boot(role='admin',initialHash=''){
   if(url==='/api/admin/delete-file'){if(deleteFails){ok=false;data={error:'Set the case to Draft before deleting its PDFs.'};}else deleted=true;}
   return{ok,json:async()=>data};
  };
- const context={console,Date,URLSearchParams,FormData,location:loc,document:{querySelector:get,createElement:tag=>new Element(tag),body},window:{scrollTo(){},addEventListener:(name,fn)=>events[name]=fn},fetch};
+ const context={console,Date,URLSearchParams,FormData,location:loc,document:{querySelector:get,querySelectorAll:selector=>selector==='#view-products .product-card'?[new Element('a')]:[],createElement:tag=>new Element(tag),body},window:{scrollTo(){},addEventListener:(name,fn)=>events[name]=fn},fetch};
  vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);await tick();
  const navigate=async path=>{loc.hash='#'+path;events.hashchange();await tick();};
  return{get,loc,events,body,navigate,savedOrders,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
@@ -43,3 +43,4 @@ async function boot(role='admin',initialHash=''){
  const buyer=await boot('buyer');assert.equal(buyer.get('#buyer').hidden,false);assert.equal(buyer.get('#admin').hidden,true);assert.equal(buyer.get('#logout').hidden,false);
  console.log('PASS: sidebar views, product hierarchy, case details/PDF tabs, unsaved tab retention, new case/save flow, order move/save/failure/retry, inline delete handling and buyer sign-out.');
 })().catch(e=>{console.error(e);process.exit(1)});
+
