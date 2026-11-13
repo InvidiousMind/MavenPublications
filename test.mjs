@@ -72,3 +72,11 @@ assert.equal((await call('download/new-mystery/'+caseFiles[0].id,undefined,newBu
 assert.equal((await(await call('me',undefined,newBuyerSession)).json()).caseTitle,'New Mystery');
 assert.equal((await call('admin/codes',{caseId:'unregistered-case'},caseAdmin)).status,400);
 console.log('PASS: case create/edit validation, draft privacy, publication gate, public metadata only, protected PDFs, archival preserving buyer access, case names and unregistered-case rejection.');
+
+// Custom customer IDs must round-trip without fixed-format restrictions.
+for(const customerId of ['MAV-00001','VIP-ALICAN','Special customer 42','Özel/2026']){
+ const response=await call('admin/codes',{caseId:'new-mystery',customerId},caseAdmin);
+ assert.equal(response.status,200);assert.equal((await response.json()).customerId,customerId);
+}
+for(const customerId of ['', '   ', 'x'.repeat(101)])assert.equal((await call('admin/codes',{caseId:'new-mystery',customerId},caseAdmin)).status,400);
+console.log('PASS: custom customer IDs accepted unchanged; empty and oversized IDs rejected.');
