@@ -11,7 +11,7 @@ const istanbulDate=(ms=Date.now())=>new Date(ms+10800000).toISOString().slice(0,
 export function annualExpiry(date){if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw Error('Invalid purchase date');const [y,m,d]=date.split('-').map(Number),v=new Date(Date.UTC(y,m-1,d));if(v.toISOString().slice(0,10)!==date)throw Error('Invalid purchase date');const last=new Date(Date.UTC(y+1,m,0)).getUTCDate();return Date.UTC(y+1,m-1,Math.min(d,last))-10800000;}
 const expiresAt=v=>v.expires||annualExpiry(v.purchaseDate||istanbulDate(v.created));
 
-export default {async fetch(request,env){const url=new URL(request.url);if(url.pathname.startsWith('/api/')){if(!env.VAULT)return json({error:'The case portal is not configured yet.'},503);return env.VAULT.get(env.VAULT.idFromName('maven-case-vault-v1')).fetch(request);}return env.ASSETS.fetch(request);}};
+export default {async fetch(request,env){const url=new URL(request.url);if(url.pathname.startsWith('/api/')){if(!env.VAULT)return json({error:'The case portal is not configured yet.'},503);return env.VAULT.get(env.VAULT.idFromName('maven-case-vault-v1')).fetch(request);}const response=await env.ASSETS.fetch(request);if(url.pathname==='/portal.html'||url.pathname==='/portal'){const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}return response;}};
 export class CaseVault{
  constructor(state,env){this.state=state;this.db=state.storage;this.env=env;}
  async alarm(){const now=Date.now();for(const prefix of ['session:','rate:']){const rows=await this.db.list({prefix});for(const [key,v]of rows)if(v.expires<now)await this.db.delete(key);}await this.db.setAlarm(now+3600000);}
