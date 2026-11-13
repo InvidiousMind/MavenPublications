@@ -1,0 +1,9 @@
+{
+  "name": "mavenpublications",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-13",
+  "keep_vars": true,
+  "assets": { "directory": ".", "binding": "ASSETS", "run_worker_first": ["/api/*"] },
+  "durable_objects": { "bindings": [{ "name": "VAULT", "class_name": "CaseVault" }] },
+  "migrations": [{ "tag": "case-vault-v1", "new_sqlite_classes": ["CaseVault"] }]
+}

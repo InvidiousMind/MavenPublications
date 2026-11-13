@@ -1,4 +1,5 @@
-# Publish the two website pages only.
+# Only these public HTML pages may be uploaded. Backend code and metadata stay private.
 *
 !index.html
 !mysteries.html
+!portal.html
