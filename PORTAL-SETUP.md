@@ -9,7 +9,7 @@
 6. Upload the four PDFs under case ID the-last-recording. Assign each its correct category: instructions, case-file, hints, solution. Maximum 5 MB per file.
 7. Enter the buyer's CRM customer number (MAV-000001 format) and purchase date. Create a code for that buyer and copy it immediately. The code is shown only once and is never stored in plaintext. Deliver it with the buyer portal URL /portal.html.
 
-Master changes in the portal take effect immediately and invalidate all admin sessions. After initialization, changing ADMIN_BOOTSTRAP_CODE will NOT reset the master code. Keep the current master code safe; no automated reset workflow is included. The bootstrap secret can be removed after the master credential is initialized.
+Master changes in the portal take effect immediately and invalidate all admin sessions. After initialization, changing ADMIN_BOOTSTRAP_CODE will NOT reset the master code. Keep the current master code safe. Recovery is available through a one-time Cloudflare runtime secret, as described below. The bootstrap secret can be removed after the master credential is initialized.
 
 Buyer codes grant access to one case, expire at 00:00 Europe/Istanbul on the one-year anniversary of the purchase date, or earlier if revoked, and do not require buyer accounts. They are bearer credentials: anyone who receives a valid code can use it. Revoking access does not delete PDF copies already downloaded. Lost codes should be revoked and replaced. Buyer references need not contain personal information.
 
@@ -19,3 +19,6 @@ The SQLite-backed CaseVault Durable Object stores master hashes, buyer-code hash
 The existing deploy command can stay unchanged because wrangler.jsonc specifies worker.mjs and storage bindings. The .assetsignore allowlist must include only index.html, mysteries.html, and portal.html. Backend source and build metadata are excluded from static assets.
 
 Validation: node test.mjs exercises authorization, code uniqueness, case isolation, PDF chunk storage and downloads, revocation, master changes, persistence, origin protection, and rate limiting. Wrangler dry run passed. Chromium UI testing was blocked by the execution environment's socket restrictions. Live deployment, login and file uploads must still be verified on Cloudflare.
+
+## Recover a forgotten master code
+After the recovery update deploys, add a runtime Secret named ADMIN_RESET_CODE in the mavenpublications Worker's Settings > Variables and Secrets (not build settings). Choose a fresh random code of 16–200 characters and save it privately. Save and deploy. Open /portal?admin=1 and log in with that code. On its first use it becomes the new master code and invalidates previous admin sessions, preserving buyer codes and case PDFs. Each distinct recovery value can perform this reset only once. Remove ADMIN_RESET_CODE from Cloudflare after successful login. You can then change the master code from the portal. A previously consumed recovery value cannot reset it again, even if it is left configured. Never put recovery secrets into GitHub, Drive source files, or chat.

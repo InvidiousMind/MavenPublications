@@ -31,3 +31,19 @@ for(let i=0;i<11;i++){r=await vault.fetch(new Request('https://maven.test/api/lo
 assert.equal((await worker.fetch(new Request('https://maven.test/api/me'),{})).status,503);
 const v2=new CaseVault({storage,blockConcurrencyWhile:f=>f()},{ADMIN_BOOTSTRAP_CODE:'Initial-master-code-123456'});assert.equal((await v2.fetch(new Request('https://maven.test/api/login',{method:'POST',headers:{origin:'https://maven.test','CF-Connecting-IP':'restart'},body:JSON.stringify({role:'admin',code:'Initial-master-code-123456'})}))).status,401);
 console.log('PASS: annual expiry, leap-year handling, expired login/download rejection, admin initialization, unique codes, case isolation, private multi-chunk PDFs, revocation, master rotation, restart persistence, origin check, rate limiting, missing setup.');
+
+// Recover through a Cloudflare-owned one-use secret. Keep all buyer and PDF records.
+const recoverySecret='Recovery-test-code-1234567890';
+const recovery=new CaseVault({storage,blockConcurrencyWhile:f=>f()},{ADMIN_RESET_CODE:recoverySecret});
+const recover=async(code)=>recovery.fetch(new Request('https://maven.test/api/login',{method:'POST',headers:{origin:'https://maven.test','CF-Connecting-IP':'recovery-'+(++ip)},body:JSON.stringify({role:'admin',code})}));
+const beforeFiles=await storage.list({prefix:'file:'}),beforeBuyers=await storage.list({prefix:'buyer:'});
+assert.equal((await recover('incorrect-recovery-code')).status,401);
+assert.equal((await recover(recoverySecret)).status,200);
+assert.equal((await recover('New-master-code-123456')).status,401);
+assert.deepEqual(await storage.list({prefix:'file:'}),beforeFiles);assert.deepEqual(await storage.list({prefix:'buyer:'}),beforeBuyers);
+const recoveredToken=take(await recover(recoverySecret));
+assert.equal((await recovery.fetch(new Request('https://maven.test/api/admin/master',{method:'POST',headers:{origin:'https://maven.test',cookie:recoveredToken,'CF-Connecting-IP':'rotate-recovered'},body:JSON.stringify({currentCode:recoverySecret,newCode:'Final-private-test-code-123456'})}))).status,200);
+assert.equal((await recover(recoverySecret)).status,401);
+assert.equal((await recover('Final-private-test-code-123456')).status,200);
+assert.equal((await storage.list({prefix:'admin-reset-used:'})).size,1);
+console.log('PASS: recovery requires the Cloudflare secret, invalidates the old master, preserves buyers/files, and cannot replay after master rotation.');

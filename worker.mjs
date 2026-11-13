@@ -26,6 +26,14 @@ export class CaseVault{
  const body=await req.text();if(body.length>2048)return json({error:'Invalid request.'},400);const b=JSON.parse(body),code=String(b.code||'');if(code.length<16||code.length>200)return json({error:'Invalid code.'},401);
  if(b.role==='admin'){
  await this.state.blockConcurrencyWhile(async()=>{if(!await this.db.get('master')&&this.env.ADMIN_BOOTSTRAP_CODE?.length>=16){const salt=random();await this.db.put('master',{salt,digest:await password(this.env.ADMIN_BOOTSTRAP_CODE,salt),version:random()});}});
+ // A Cloudflare account owner may supply a fresh, one-use recovery secret.
+ if(typeof this.env.ADMIN_RESET_CODE==='string'&&this.env.ADMIN_RESET_CODE.length>=16&&this.env.ADMIN_RESET_CODE.length<=200&&equal(code,this.env.ADMIN_RESET_CODE)){
+ await this.state.blockConcurrencyWhile(async()=>{
+ const fingerprint=await hash(this.env.ADMIN_RESET_CODE),usedKey='admin-reset-used:'+fingerprint;
+ if(!await this.db.get(usedKey)){const salt=random(),digest=await password(code,salt);
+ await this.db.transaction(async tx=>{if(await tx.get(usedKey))return;await tx.put('master',{salt,digest,version:random()});await tx.put(usedKey,{usedAt:Date.now()});});}
+ });
+ }
  const m=await this.db.get('master');if(!m)return json({error:'Admin setup is pending. Set ADMIN_BOOTSTRAP_CODE in Cloudflare.'},503);if(!equal(await password(code,m.salt),m.digest))return json({error:'Invalid code.'},401);return this.loginSession({role:'admin',version:m.version});
  }
  const codeHash=await hash(code),bought=await this.db.get('buyer:'+codeHash);if(!bought||bought.revoked||expiresAt(bought)<=Date.now())return json({error:'Invalid or expired code.'},401);return this.loginSession({role:'buyer',codeHash,caseId:bought.caseId});}
