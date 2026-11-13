@@ -1,3 +1,4 @@
-# Publish only the self-contained website. Exclude Git metadata and build files.
+# Publish the two website pages only.
 *
 !index.html
+!mysteries.html
