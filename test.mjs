@@ -80,3 +80,35 @@ for(const customerId of ['MAV-00001','VIP-ALICAN','Special customer 42','Özel/2
 }
 for(const customerId of ['', '   ', 'x'.repeat(101)])assert.equal((await call('admin/codes',{caseId:'new-mystery',customerId},caseAdmin)).status,400);
 console.log('PASS: custom customer IDs accepted unchanged; empty and oversized IDs rejected.');
+
+// Order is shared by the public catalogue and admin lists and survives edits/restarts.
+const orderingIds=['the-empty-frame','the-guest-in-room-nine'];
+for(const caseId of orderingIds){
+ assert.equal((await call('admin/cases',{mode:'create',caseId,title:caseId,synopsis:'Safe summary',status:'draft'},caseAdmin)).status,200);
+ for(const category of ['instructions','case-file','hints','solution']){const f=new FormData();f.set('caseId',caseId);f.set('category',category);f.set('file',new Blob(['%PDF-1.7\nOrder test']),'case.pdf');assert.equal((await call('admin/upload',f,caseAdmin)).status,200);}
+ assert.equal((await call('admin/cases',{mode:'update',caseId,title:caseId,synopsis:'Safe summary',status:'published'},caseAdmin)).status,200);
+}
+let ordered=(await(await call('admin/cases',undefined,caseAdmin)).json()).cases;
+assert.deepEqual(ordered.slice(0,3).map(c=>c.caseId),['the-last-recording',...orderingIds]);
+const beforeOrder=await storage.list({prefix:'case:'});
+assert.equal((await call('admin/cases/order',{caseIds:[]},caseAdmin)).status,409);
+assert.equal((await call('admin/cases/order',{caseIds:['the-last-recording','the-last-recording']},caseAdmin)).status,400);
+assert.equal((await call('admin/cases/order',{caseIds:'wrong'},caseAdmin)).status,400);
+assert.equal((await call('admin/cases/order',{caseIds:['../invalid']},caseAdmin)).status,400);
+assert.equal((await call('admin/cases/order',{caseIds:ordered.map(c=>c.caseId).map((id,i)=>i===0?'missing-case':id)},caseAdmin)).status,409);
+assert.deepEqual(await storage.list({prefix:'case:'}),beforeOrder);
+const reverseOrder=ordered.map(c=>c.caseId).reverse();
+assert.equal((await call('admin/cases/order',{caseIds:reverseOrder},newBuyerSession)).status,403);
+assert.equal((await call('admin/cases/order',{caseIds:reverseOrder})).status,401);
+const preservedFiles=await storage.list({prefix:'file:'}),preservedBuyers=await storage.list({prefix:'buyer:'});
+assert.equal((await call('admin/cases/order',{caseIds:reverseOrder},caseAdmin)).status,200);
+assert.deepEqual((await(await call('admin/cases',undefined,caseAdmin)).json()).cases.map(c=>c.caseId),reverseOrder);
+assert.deepEqual((await(await call('cases')).json()).cases.map(c=>c.caseId),reverseOrder.filter(id=>orderingIds.includes(id)));
+assert.equal((await call('admin/cases',{mode:'update',caseId:'the-empty-frame',title:'Updated title',synopsis:'Edited summary',status:'published'},caseAdmin)).status,200);
+assert.deepEqual((await(await call('admin/cases',undefined,caseAdmin)).json()).cases.map(c=>c.caseId),reverseOrder);
+const restarted=new CaseVault({storage,blockConcurrencyWhile:f=>f()},{});
+const restartedList=await restarted.fetch(new Request('https://maven.test/api/cases'));
+assert.deepEqual((await restartedList.json()).cases.map(c=>c.caseId),reverseOrder.filter(id=>orderingIds.includes(id)));
+assert.deepEqual(await storage.list({prefix:'file:'}),preservedFiles);assert.deepEqual(await storage.list({prefix:'buyer:'}),preservedBuyers);
+console.log('PASS: original series order, explicit persisted order, public/admin agreement, complete-list validation, admin permissions, edit/restart persistence and preserved buyer/PDF records.');
+
