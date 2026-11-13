@@ -113,7 +113,7 @@ assert.deepEqual(await storage.list({prefix:'file:'}),preservedFiles);assert.dee
 console.log('PASS: original series order, explicit persisted order, public/admin agreement, complete-list validation, admin permissions, edit/restart persistence and preserved buyer/PDF records.');
 
 
-// Only revoked access can be deleted; removed codes can never be reused.
+// Only revoked access can be deleted; its code becomes available for reissue.
 r=await call('admin/codes',{caseId:'the-empty-frame',customerId:'DELETE-TEST'},caseAdmin);const deletionBuyer=await r.json();
 const deletionId=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(deletionBuyer.code)).then(b=>Buffer.from(b).toString('hex'));
 const deletionSession=take(await call('login',{code:deletionBuyer.code}));
@@ -128,7 +128,22 @@ assert.equal(await storage.get('buyer:'+deletionId),undefined);
 assert.equal((await(await call('admin/codes',undefined,caseAdmin)).json()).codes.some(c=>c.id===deletionId),false);
 assert.equal((await call('login',{code:deletionBuyer.code})).status,401);
 assert.equal((await call('me',undefined,deletionSession)).status,401);
-assert.equal((await call('admin/codes',{caseId:'the-empty-frame',code:deletionBuyer.code},caseAdmin)).status,409);
 assert.equal((await call('admin/delete-revoked',{id:deletionId},caseAdmin)).status,404);
 assert.deepEqual(await storage.list({prefix:'file:'}),beforeDeleteFiles);
-console.log('PASS: revoked record deletion, active record protection, admin permissions, deleted-code reuse prevention and invalidated sessions.');
+console.log('PASS: revoked record deletion, active record protection, admin permissions, removed records and invalidated sessions.');
+
+// Also release codes deleted by the prior version, without reviving old sessions.
+await storage.put('deleted-buyer:'+deletionId,true);
+r=await call('admin/codes',{caseId:'the-guest-in-room-nine',customerId:'VIP-NEW',code:deletionBuyer.code},caseAdmin);
+assert.equal(r.status,200);assert.equal((await r.json()).customerId,'VIP-NEW');
+assert.equal(await storage.get('deleted-buyer:'+deletionId),undefined);
+assert.equal((await call('me',undefined,deletionSession)).status,401);
+const reissuedSession=take(await call('login',{code:deletionBuyer.code}));
+assert.equal((await(await call('me',undefined,reissuedSession)).json()).caseId,'the-guest-in-room-nine');
+assert.equal((await call('admin/codes',{caseId:'the-empty-frame',code:deletionBuyer.code},caseAdmin)).status,409);
+assert.equal((await call('admin/revoke',{id:deletionId},caseAdmin)).status,200);
+assert.equal((await call('admin/codes',{caseId:'the-empty-frame',code:deletionBuyer.code},caseAdmin)).status,409);
+assert.equal((await call('admin/delete-revoked',{id:deletionId},caseAdmin)).status,200);
+assert.equal((await call('admin/codes',{caseId:'the-empty-frame',code:deletionBuyer.code},caseAdmin)).status,200);
+assert.equal((await call('me',undefined,reissuedSession)).status,401);
+console.log('PASS: deleted codes reusable across cases, prior deletion markers released, undeleted codes protected and old sessions stay invalid after reissue.');
