@@ -10,22 +10,24 @@ async function boot(role='admin',initialHash=''){
  const get=s=>{if(!els.has(s))els.set(s,new Element());return els.get(s);};
  const body=new Element(),events={},loc={search:role==='admin'?'?admin=1':'',hash:initialHash,reload(){}};
  let records=[{caseId:'the-last-recording',title:'The Last Recording',status:'published'},{caseId:'the-empty-frame',title:'The Empty Frame',status:'draft'},{caseId:'the-guest-in-room-nine',title:'The Guest in Room Nine',status:'published'}],savedOrders=[],orderFails=false,deleteFails=true,deleted=false;
+ let accessDeleted=false,accessDeleteFails=true;const revokedEntry={id:'b'.repeat(64),label:'Old purchase',customerId:'VIP',caseId:'the-empty-frame',revoked:true,expires:Date.now()+100000};
  const fetch=async(url,opt={})=>{let data={},ok=true;
   if(url==='/api/me')data={role,caseId:'the-empty-frame',caseTitle:'The Empty Frame'};
-  if(url==='/api/admin/codes')data={codes:[]};
+  if(url==='/api/admin/codes')data={codes:accessDeleted?[]:[revokedEntry]};
   if(url==='/api/admin/cases'){if(opt.method==='POST'){const b=JSON.parse(opt.body);if(b.mode==='create')records.push(b);else records=records.map(c=>c.caseId===b.caseId?{...c,...b}:c);}data={cases:records.map(c=>({...c}))};}
   if(url==='/api/admin/cases/order'){const ids=JSON.parse(opt.body).caseIds;if(orderFails){ok=false;data={error:'Save failed. Try again.'};}else{savedOrders.push(ids);records=ids.map(id=>records.find(c=>c.caseId===id));}}
   if(url.startsWith('/api/files?'))data={files:deleted?[]:[{id:'a'.repeat(48),name:'Start Here.pdf',category:'instructions',size:123}]};
+  if(url==='/api/admin/delete-revoked'){if(accessDeleteFails){ok=false;data={error:'Please try again.'};}else accessDeleted=true;}
   if(url==='/api/admin/delete-file'){if(deleteFails){ok=false;data={error:'Set the case to Draft before deleting its PDFs.'};}else deleted=true;}
   return{ok,json:async()=>data};
  };
  const context={console,Date,URLSearchParams,FormData,location:loc,document:{querySelector:get,querySelectorAll:selector=>selector==='#view-products .product-card'?[new Element('a')]:[],createElement:tag=>new Element(tag),body},window:{scrollTo(){},addEventListener:(name,fn)=>events[name]=fn},fetch};
  vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);await tick();
  const navigate=async path=>{loc.hash='#'+path;events.hashchange();await tick();};
- return{get,loc,events,body,navigate,savedOrders,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
+ return{get,loc,events,body,navigate,savedOrders,setAccessDeleteFails:v=>accessDeleteFails=v,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
 }
 (async()=>{
- const {get,navigate,savedOrders,setOrderFails,setDeleteFails,body}=await boot();
+ const {get,navigate,savedOrders,setOrderFails,setDeleteFails,setAccessDeleteFails,body}=await boot();
  assert.equal(get('#view-overview').hidden,false);assert.equal(get('#view-products').hidden,true);assert.ok(body.classes.has('admin-session'));
  await navigate('products');assert.equal(get('#view-products').hidden,false);assert.equal(get('#view-overview').hidden,true);
  await navigate('products/mysteries');assert.equal(get('#case-list').children.length,3);assert.equal(get('#nav-products').attributes['aria-current'],'page');
@@ -39,7 +41,7 @@ async function boot(role='admin',initialHash=''){
  await navigate('products/mysteries/new/files');assert.equal(get('#saved-case-upload').hidden,true);assert.equal(get('#new-case-files-note').hidden,false);
  await navigate('products/mysteries/new');get('#case-title-input').value='Fourth Mystery';get('#case-title-input').events.input();assert.equal(get('#case-slug').value,'fourth-mystery');get('#case-status').value='draft';
  await get('#case-form').events.submit({preventDefault(){},submitter:get('#save-case')});await navigate('products/mysteries/cases/fourth-mystery');assert.equal(get('#case-slug').disabled,true);assert.match(get('#case-feedback').textContent,/Case saved/);
- await navigate('access');assert.equal(get('#view-access').hidden,false);assert.equal(get('#view-case').hidden,true);await navigate('settings');assert.equal(get('#view-settings').hidden,false);
+ await navigate('access');let revokedRow=get('#codes').children[0];assert.equal(revokedRow.children[2].textContent,'Delete revoked access');revokedRow.children[2].onclick();assert.equal(revokedRow.children[3].hidden,false);revokedRow.children[3].children[2].onclick();assert.equal(revokedRow.children[3].hidden,true);revokedRow.children[2].onclick();await revokedRow.children[3].children[1].onclick();assert.match(revokedRow.children[3].children[3].textContent,/try again/);setAccessDeleteFails(false);await revokedRow.children[3].children[1].onclick();assert.match(get('#codes').children[0].textContent,/No buyer codes/);assert.equal(get('#view-access').hidden,false);assert.equal(get('#view-case').hidden,true);await navigate('settings');assert.equal(get('#view-settings').hidden,false);
  const buyer=await boot('buyer');assert.equal(buyer.get('#buyer').hidden,false);assert.equal(buyer.get('#admin').hidden,true);assert.equal(buyer.get('#logout').hidden,false);
  console.log('PASS: sidebar views, product hierarchy, case details/PDF tabs, unsaved tab retention, new case/save flow, order move/save/failure/retry, inline delete handling and buyer sign-out.');
 })().catch(e=>{console.error(e);process.exit(1)});

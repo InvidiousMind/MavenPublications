@@ -112,3 +112,23 @@ assert.deepEqual((await restartedList.json()).cases.map(c=>c.caseId),reverseOrde
 assert.deepEqual(await storage.list({prefix:'file:'}),preservedFiles);assert.deepEqual(await storage.list({prefix:'buyer:'}),preservedBuyers);
 console.log('PASS: original series order, explicit persisted order, public/admin agreement, complete-list validation, admin permissions, edit/restart persistence and preserved buyer/PDF records.');
 
+
+// Only revoked access can be deleted; removed codes can never be reused.
+r=await call('admin/codes',{caseId:'the-empty-frame',customerId:'DELETE-TEST'},caseAdmin);const deletionBuyer=await r.json();
+const deletionId=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(deletionBuyer.code)).then(b=>Buffer.from(b).toString('hex'));
+const deletionSession=take(await call('login',{code:deletionBuyer.code}));
+assert.equal((await call('admin/delete-revoked',{id:deletionId})).status,401);
+assert.equal((await call('admin/delete-revoked',{id:deletionId},deletionSession)).status,403);
+assert.equal((await call('admin/delete-revoked',{id:'invalid'},caseAdmin)).status,400);
+assert.equal((await call('admin/delete-revoked',{id:deletionId},caseAdmin)).status,409);
+assert.equal((await call('admin/revoke',{id:deletionId},caseAdmin)).status,200);
+const beforeDeleteFiles=await storage.list({prefix:'file:'});
+assert.equal((await call('admin/delete-revoked',{id:deletionId},caseAdmin)).status,200);
+assert.equal(await storage.get('buyer:'+deletionId),undefined);
+assert.equal((await(await call('admin/codes',undefined,caseAdmin)).json()).codes.some(c=>c.id===deletionId),false);
+assert.equal((await call('login',{code:deletionBuyer.code})).status,401);
+assert.equal((await call('me',undefined,deletionSession)).status,401);
+assert.equal((await call('admin/codes',{caseId:'the-empty-frame',code:deletionBuyer.code},caseAdmin)).status,409);
+assert.equal((await call('admin/delete-revoked',{id:deletionId},caseAdmin)).status,404);
+assert.deepEqual(await storage.list({prefix:'file:'}),beforeDeleteFiles);
+console.log('PASS: revoked record deletion, active record protection, admin permissions, deleted-code reuse prevention and invalidated sessions.');
