@@ -4,15 +4,18 @@ class Element{
  addEventListener(k,f){this.events[k]=f;}append(...x){this.children.push(...x);}replaceChildren(...x){this.children=[...x];}setAttribute(k,v){this.attributes[k]=v;}removeAttribute(k){delete this.attributes[k];}scrollIntoView(){}focus(){}querySelector(){return new Element();}click(){return this.onclick?.();}reset(){}
 }
 const tick=()=>new Promise(r=>setImmediate(r));
-async function boot(role='admin',initialHash=''){
+async function boot(role='admin',initialHash='',query=null){
  const html=fs.readFileSync(__dirname+'/portal.html','utf8'),els=new Map();
  for(const m of html.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)){const e=new Element(m[1]);e.hidden=/\bhidden\b/.test(m[2]);e.value=m[2].match(/\bvalue="([^"]*)"/)?.[1]||'';els.set('#'+m[3],e);}
  const get=s=>{if(!els.has(s))els.set(s,new Element());return els.get(s);};
- const body=new Element(),events={},loc={search:role==='admin'?'?admin=1':'',hash:initialHash,reload(){}};
+ const body=new Element(),events={},loc={search:query??(role==='admin'?'?admin=1':''),hash:initialHash,reload(){}};
+ let currentCase='the-empty-frame',currentTitle='The Empty Frame',loginFails=false;const requests=[];
  let records=[{caseId:'the-last-recording',title:'The Last Recording',status:'published'},{caseId:'the-empty-frame',title:'The Empty Frame',status:'draft'},{caseId:'the-guest-in-room-nine',title:'The Guest in Room Nine',status:'published'}],savedOrders=[],orderFails=false,deleteFails=true,deleted=false;
  let accessDeleted=false,accessDeleteFails=true;const revokedEntry={id:'b'.repeat(64),label:'Old purchase',customerId:'VIP',caseId:'the-empty-frame',revoked:true,expires:Date.now()+100000};
  const fetch=async(url,opt={})=>{let data={},ok=true;
-  if(url==='/api/me')data={role,caseId:'the-empty-frame',caseTitle:'The Empty Frame'};
+  requests.push(url);
+  if(url==='/api/login'){if(loginFails){ok=false;data={error:'Invalid or expired code.'};}else{role='buyer';currentCase='the-last-recording';currentTitle='The Last Recording';}}
+  if(url==='/api/me')data={role,caseId:currentCase,caseTitle:currentTitle};
   if(url==='/api/admin/codes')data={codes:accessDeleted?[]:[revokedEntry]};
   if(url==='/api/admin/cases'){if(opt.method==='POST'){const b=JSON.parse(opt.body);if(b.mode==='create')records.push(b);else records=records.map(c=>c.caseId===b.caseId?{...c,...b}:c);}data={cases:records.map(c=>({...c}))};}
   if(url==='/api/admin/cases/order'){const ids=JSON.parse(opt.body).caseIds;if(orderFails){ok=false;data={error:'Save failed. Try again.'};}else{savedOrders.push(ids);records=ids.map(id=>records.find(c=>c.caseId===id));}}
@@ -24,7 +27,7 @@ async function boot(role='admin',initialHash=''){
  const context={console,Date,URLSearchParams,FormData,location:loc,document:{querySelector:get,querySelectorAll:selector=>selector==='#view-products .product-card'?[new Element('a')]:[],createElement:tag=>new Element(tag),body},window:{scrollTo(){},addEventListener:(name,fn)=>events[name]=fn},fetch};
  vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);await tick();
  const navigate=async path=>{loc.hash='#'+path;events.hashchange();await tick();};
- return{get,loc,events,body,navigate,savedOrders,setAccessDeleteFails:v=>accessDeleteFails=v,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
+ return{get,loc,events,body,navigate,savedOrders,requests,setLoginFails:v=>loginFails=v,setAccessDeleteFails:v=>accessDeleteFails=v,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
 }
 (async()=>{
  const {get,navigate,savedOrders,setOrderFails,setDeleteFails,setAccessDeleteFails,body}=await boot();
@@ -43,6 +46,12 @@ async function boot(role='admin',initialHash=''){
  await get('#case-form').events.submit({preventDefault(){},submitter:get('#save-case')});await navigate('products/mysteries/cases/fourth-mystery');assert.equal(get('#case-slug').disabled,true);assert.match(get('#case-feedback').textContent,/Case saved/);
  await navigate('access');let revokedRow=get('#codes').children[0];assert.equal(revokedRow.children[2].textContent,'Delete revoked access');revokedRow.children[2].onclick();assert.equal(revokedRow.children[3].hidden,false);revokedRow.children[3].children[2].onclick();assert.equal(revokedRow.children[3].hidden,true);revokedRow.children[2].onclick();await revokedRow.children[3].children[1].onclick();assert.match(revokedRow.children[3].children[3].textContent,/try again/);setAccessDeleteFails(false);await revokedRow.children[3].children[1].onclick();assert.match(get('#codes').children[0].textContent,/No buyer codes/);assert.equal(get('#view-access').hidden,false);assert.equal(get('#view-case').hidden,true);await navigate('settings');assert.equal(get('#view-settings').hidden,false);
  const buyer=await boot('buyer');assert.equal(buyer.get('#buyer').hidden,false);assert.equal(buyer.get('#admin').hidden,true);assert.equal(buyer.get('#logout').hidden,false);
+ buyer.get('#enter-another-code').onclick();assert.equal(buyer.get('#buyer').hidden,true);assert.equal(buyer.get('#login').hidden,false);
+ const entry=await boot('buyer','','?enter=1');assert.equal(entry.get('#login').hidden,false);assert.equal(entry.get('#buyer').hidden,true);assert.equal(entry.requests.length,0);
+ entry.get('#access').value='invalid-code-123456';entry.setLoginFails(true);await entry.get('#login-form').events.submit({preventDefault(){},submitter:new Element('button')});assert.equal(entry.get('#login').hidden,false);assert.match(entry.get('#message').textContent,/Invalid or expired/);
+ entry.setLoginFails(false);entry.get('#access').value='valid-code-12345678';await entry.get('#login-form').events.submit({preventDefault(){},submitter:new Element('button')});assert.equal(entry.get('#login').hidden,true);assert.equal(entry.get('#buyer').hidden,false);assert.equal(entry.get('#case-title').textContent,'The Last Recording');assert.ok(entry.requests.includes('/api/files?case=the-last-recording'));assert.equal(entry.get('#access').value,'');
+ console.log('PASS: fresh product code entry, invalid code feedback, code resolves assigned product, switching products, and clearing submitted codes.');
  console.log('PASS: sidebar views, product hierarchy, case details/PDF tabs, unsaved tab retention, new case/save flow, order move/save/failure/retry, inline delete handling and buyer sign-out.');
 })().catch(e=>{console.error(e);process.exit(1)});
+
 
