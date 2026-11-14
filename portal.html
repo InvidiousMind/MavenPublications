@@ -41,13 +41,13 @@ body.admin-session main>#logout{display:none}body.admin-session #message:empty{d
   <section id="view-overview" class="admin-view" hidden>
    <p class="eyebrow">Your publishing workspace</p><h2 class="view-title">Welcome to MAVEN.</h2>
    <p>Choose a section from the menu to manage your products, content, and settings.</p>
-   <div class="stats"><div><strong id="stat-products">1</strong><span>Products</span></div></div>
+   <div class="stats"><div><strong id="stat-products">3</strong><span>Products</span></div></div>
    <div class="box"><h3>Your next step</h3><p>Open Products to select a product and manage its content and files.</p><a class="action-link" href="#products">Open products</a></div>
   </section>
   <section id="view-products" class="admin-view" hidden>
    <p class="eyebrow">Catalogue</p><h2 class="view-title">Products</h2><p>Select a product to open its management panel.</p>
    <a class="product-card" href="#products/mysteries"><span class="product-icon" aria-hidden="true">M</span><span><strong>MAVEN Mystery Series</strong><span>Manage cases, arrange their website order, and upload private PDFs.</span></span><span aria-hidden="true">→</span></a>
-  </section>
+  <a class="product-card" href="/maven-cards.html" target="_blank" rel="noopener"><span class="product-icon" aria-hidden="true">C</span><span><strong>MAVEN Cards</strong><span>Product page in preparation. View the public introduction.</span></span><span aria-hidden="true">↗</span></a><a class="product-card" href="/maven-notes.html" target="_blank" rel="noopener"><span class="product-icon" aria-hidden="true">N</span><span><strong>MAVEN Notes</strong><span>Product page in preparation. View the public introduction.</span></span><span aria-hidden="true">↗</span></a></section>
   <section id="view-mysteries" class="admin-view" hidden>
    <p class="eyebrow">Products</p><h2 class="view-title">MAVEN Mystery Series</h2>
    <p>Add a case, edit its details, or manage its PDFs. Only published cases appear on the website.</p>
@@ -148,3 +148,4 @@ $('#admin-signout').onclick=()=>$('#logout').click();
 $('#logout').onclick=async()=>{try{await api('logout',{});location.reload();}catch(e){say(e.message,true);}};
 show().catch(e=>{logoutView();if(!e.message.includes('Please sign in'))say(e.message,true);});
 </script></body></html>
+
