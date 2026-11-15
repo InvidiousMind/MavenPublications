@@ -50,6 +50,8 @@ async function boot(role='admin',initialHash='',query=null){
  get('#access-product').value='mysteries';get('#access-product').events.change();assert.equal(get('#case-id').hidden,false);assert.equal(get('#case-id').required,true);
  const gameBuyer=await boot('buyer','','?game=1');assert.equal(gameBuyer.loc.assigned,'/play/speaking-jeopardy');assert.ok(!gameBuyer.requests.some(r=>r.startsWith('/api/files')));
  console.log('PASS: Jeopardy admin product panel, product selection, conditional case field, code form submission, and universal game redirect.');
+ await navigate('products/cards');assert.equal(get('#view-cards').hidden,false);assert.equal(get('#nav-products').attributes['aria-current'],'page');get('#card-app-product').value='maven-ielts';get('#issue-cards-code').onclick();await navigate('access');assert.equal(get('#access-product').value,'maven-ielts');assert.equal(get('#case-id').required,false);assert.match(get('#access-duration-help').textContent,/MAVEN IELTS/);await get('#code-form').events.submit({preventDefault(){},submitter:new Element('button')});
+ console.log('PASS: Cards admin route, collection code selection and collection-specific access description.');
  const buyer=await boot('buyer');assert.equal(buyer.get('#buyer').hidden,false);assert.equal(buyer.get('#admin').hidden,true);assert.equal(buyer.get('#logout').hidden,false);
  buyer.get('#enter-another-code').onclick();assert.equal(buyer.get('#buyer').hidden,true);assert.equal(buyer.get('#login').hidden,false);
  const entry=await boot('buyer','','?enter=1');assert.equal(entry.get('#login').hidden,false);assert.equal(entry.get('#buyer').hidden,true);assert.equal(entry.requests.length,0);
@@ -58,6 +60,7 @@ async function boot(role='admin',initialHash='',query=null){
  console.log('PASS: fresh product code entry, invalid code feedback, code resolves assigned product, switching products, and clearing submitted codes.');
  console.log('PASS: sidebar views, product hierarchy, case details/PDF tabs, unsaved tab retention, new case/save flow, order move/save/failure/retry, inline delete handling and buyer sign-out.');
 })().catch(e=>{console.error(e);process.exit(1)});
+
 
 
 

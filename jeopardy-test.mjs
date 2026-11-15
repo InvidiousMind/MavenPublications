@@ -14,7 +14,7 @@ assert.equal((await (await call('/api/me',undefined,game)).json()).productTitle,
 r=await call('/play/speaking-jeopardy',undefined,game);assert.equal(r.status,200);assert.match(r.headers.get('cache-control'),/no-store/);assert.match(await r.text(),/180 questions/);
 assert.equal((await call('/api/admin/game',upload,game)).status,403);assert.equal((await call('/api/admin/codes',{},game)).status,403);assert.equal((await call('/api/files?case=the-last-recording',undefined,game)).status,400);
 r=await call('/api/admin/codes',{caseId:'the-last-recording',customerId:'Mystery buyer'},admin);const mysteryCode=(await r.json()).code;
-r=await call('/api/login',{code:mysteryCode,productId:'speaking-jeopardy'});assert.equal(r.status,403);
+r=await call('/api/login',{code:mysteryCode,productId:'speaking-jeopardy'});assert.equal(r.status,200);assert.equal((await r.json()).destination,null);
 r=await call('/api/login',{code:mysteryCode});const mystery=take(r);assert.equal((await call('/play/speaking-jeopardy',undefined,mystery)).status,403);
 r=await call('/api/admin/codes',undefined,admin);const gameRecord=(await r.json()).codes.find(c=>c.productId==='speaking-jeopardy');
 await call('/api/admin/revoke',{id:gameRecord.id},admin);assert.equal((await call('/play/speaking-jeopardy',undefined,game)).status,303);assert.equal((await call('/api/login',{code:issued.code})).status,401);
@@ -23,3 +23,4 @@ r=await call('/api/login',{code:issued.code});const replacement=take(r);const ke
 let assetRead=false;const env={VAULT:{idFromName(){return 'vault';},get(){return vault;}},ASSETS:{fetch(){assetRead=true;return new Response('Public asset');}}};r=await worker.fetch(new Request('https://maven.test/play/speaking-jeopardy'),env);assert.equal(r.status,303);assert.equal(assetRead,false);
 const invalid=new FormData();invalid.append('file',new Blob(['not a game']),'bad.html');assert.equal((await call('/api/admin/game',invalid,admin)).status,400);
 console.log('PASS: private game upload, admin-only upload permissions, file validation, game code creation, assignment, universal login destination, private game routing, case isolation, expiry, revocation, reuse and stale session rejection.');
+
