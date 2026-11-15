@@ -9,11 +9,16 @@ async function boot(role='admin',initialHash='',query=null){
  for(const m of html.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)){const e=new Element(m[1]);e.hidden=/\bhidden\b/.test(m[2]);e.value=m[2].match(/\bvalue="([^"]*)"/)?.[1]||'';els.set('#'+m[3],e);}
  const get=s=>{if(!els.has(s))els.set(s,new Element());return els.get(s);};
  const body=new Element(),events={},loc={search:query??(role==='admin'?'?admin=1':''),hash:initialHash,reload(){},assign(url){this.assigned=url;}};
+ const managedId='c'.repeat(48),managedSaves=[];let managedRevision=0,managedEnabled=false;
  let currentCase='the-empty-frame',currentTitle='The Empty Frame',loginFails=false;const requests=[],issuedCodes=[];
  let records=[{caseId:'the-last-recording',title:'The Last Recording',status:'published'},{caseId:'the-empty-frame',title:'The Empty Frame',status:'draft'},{caseId:'the-guest-in-room-nine',title:'The Guest in Room Nine',status:'published'}],savedOrders=[],orderFails=false,deleteFails=true,deleted=false;
  let accessDeleted=false,accessDeleteFails=true;const revokedEntry={id:'b'.repeat(64),label:'Old purchase',customerId:'VIP',caseId:'the-empty-frame',revoked:true,expires:Date.now()+100000};
  const fetch=async(url,opt={})=>{let data={},ok=true;
   requests.push(url);
+  if(url.startsWith('/api/admin/accounts?'))data={accounts:[{id:managedId,username:'customer.one',created:Date.now()}],nextCursor:null};
+  if(url.startsWith('/api/admin/account?id='))data={id:managedId,username:'customer.one',created:Date.now(),accessRevision:managedRevision,defaultExpiresOn:'2030-01-01',products:[{key:'app:maven-talks',productId:'maven-talks',title:'MAVEN Talks',group:'MAVEN Cards',enabled:managedEnabled,expires:Date.now()+86400000,codeAccess:0,directAccess:managedEnabled}]};
+  if(url==='/api/admin/account/access'){const body=JSON.parse(opt.body);managedSaves.push(body);managedEnabled=body.changes[0].enabled;managedRevision++;data={ok:true};}
+  if(url==='/api/admin/account/password')data={ok:true};
   if(url==='/api/login'){if(loginFails){ok=false;data={error:'Invalid or expired code.'};}else{role='buyer';currentCase='the-last-recording';currentTitle='The Last Recording';}}
   if(url==='/api/me')data={role,caseId:currentCase,caseTitle:currentTitle,...(query==='?game=1'?{destination:'/play/speaking-jeopardy'}:{})};
   if(url==='/api/admin/codes'){if(opt.method==='POST'){issuedCodes.push(JSON.parse(opt.body));data={code:'Generated-game-code'};}else data={codes:accessDeleted?[]:[revokedEntry]};}
@@ -27,10 +32,10 @@ async function boot(role='admin',initialHash='',query=null){
  const context={console,Date,URLSearchParams,FormData,location:loc,document:{querySelector:get,querySelectorAll:selector=>selector==='#view-products .product-card'?[new Element('a')]:[],createElement:tag=>new Element(tag),body},window:{scrollTo(){},addEventListener:(name,fn)=>events[name]=fn},fetch};
  vm.runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);await tick();
  const navigate=async path=>{loc.hash='#'+path;events.hashchange();await tick();};
- return{get,loc,events,body,navigate,savedOrders,requests,issuedCodes,setLoginFails:v=>loginFails=v,setAccessDeleteFails:v=>accessDeleteFails=v,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
+ return{get,loc,events,body,navigate,savedOrders,managedSaves,managedId,requests,issuedCodes,setLoginFails:v=>loginFails=v,setAccessDeleteFails:v=>accessDeleteFails=v,setOrderFails:v=>orderFails=v,setDeleteFails:v=>deleteFails=v};
 }
 (async()=>{
- const {get,navigate,savedOrders,setOrderFails,setDeleteFails,setAccessDeleteFails,body}=await boot();
+ const {get,navigate,savedOrders,managedSaves,managedId,setOrderFails,setDeleteFails,setAccessDeleteFails,body}=await boot();
  assert.equal(get('#view-overview').hidden,false);assert.equal(get('#view-products').hidden,true);assert.ok(body.classes.has('admin-session'));
  await navigate('products');assert.equal(get('#view-products').hidden,false);assert.equal(get('#view-overview').hidden,true);
  await navigate('products/mysteries');assert.equal(get('#case-list').children.length,3);assert.equal(get('#nav-products').attributes['aria-current'],'page');
@@ -52,6 +57,10 @@ async function boot(role='admin',initialHash='',query=null){
  console.log('PASS: Jeopardy admin product panel, product selection, conditional case field, code form submission, and universal game redirect.');
  await navigate('products/cards');assert.equal(get('#view-cards').hidden,false);assert.equal(get('#nav-products').attributes['aria-current'],'page');get('#card-app-product').value='maven-ielts';get('#issue-cards-code').onclick();await navigate('access');assert.equal(get('#access-product').value,'maven-ielts');assert.equal(get('#case-id').required,false);assert.match(get('#access-duration-help').textContent,/MAVEN IELTS/);await get('#code-form').events.submit({preventDefault(){},submitter:new Element('button')});
  console.log('PASS: Cards admin route, collection code selection and collection-specific access description.');
+ await navigate('accounts');assert.equal(get('#view-accounts').hidden,false);assert.equal(get('#nav-accounts').attributes['aria-current'],'page');assert.equal(get('#accounts-list').children[0].textContent,'customer.one');
+ await navigate('accounts/'+managedId);assert.equal(get('#managed-account').hidden,false);assert.equal(get('#managed-username').textContent,'customer.one');assert.equal(get('#save-managed-access').disabled,true);let managedInput=get('#managed-products').children[0].children[1].children[0];managedInput.checked=true;managedInput.events.change();assert.equal(get('#save-managed-access').disabled,false);await get('#save-managed-access').onclick();assert.equal(managedSaves[0].userId,managedId);assert.equal(managedSaves[0].changes[0].key,'app:maven-talks');assert.equal(managedSaves[0].changes[0].enabled,true);assert.match(get('#managed-feedback').textContent,/Access changes saved/);
+ get('#managed-new-password').value='New-test-password-123456';get('#managed-confirm-password').value='Different';await get('#managed-password-form').events.submit({preventDefault(){},submitter:new Element('button')});assert.match(get('#message').textContent,/do not match/);get('#managed-confirm-password').value='New-test-password-123456';await get('#managed-password-form').events.submit({preventDefault(){},submitter:new Element('button')});assert.equal(get('#managed-new-password').value,'');assert.equal(get('#managed-confirm-password').value,'');assert.match(get('#managed-feedback').textContent,/Password reset/);
+ console.log('PASS: account sidebar/list/detail, checkbox save payload, direct grant feedback, reset password confirmation and field clearing.');
  const buyer=await boot('buyer');assert.equal(buyer.get('#buyer').hidden,false);assert.equal(buyer.get('#admin').hidden,true);assert.equal(buyer.get('#logout').hidden,false);
  buyer.get('#enter-another-code').onclick();assert.equal(buyer.get('#buyer').hidden,true);assert.equal(buyer.get('#login').hidden,false);
  const entry=await boot('buyer','','?enter=1');assert.equal(entry.get('#login').hidden,false);assert.equal(entry.get('#buyer').hidden,true);assert.equal(entry.requests.length,0);
@@ -60,6 +69,7 @@ async function boot(role='admin',initialHash='',query=null){
  console.log('PASS: fresh product code entry, invalid code feedback, code resolves assigned product, switching products, and clearing submitted codes.');
  console.log('PASS: sidebar views, product hierarchy, case details/PDF tabs, unsaved tab retention, new case/save flow, order move/save/failure/retry, inline delete handling and buyer sign-out.');
 })().catch(e=>{console.error(e);process.exit(1)});
+
 
 
 
