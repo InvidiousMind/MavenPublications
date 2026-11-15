@@ -10,7 +10,9 @@
       "/api/*",
       "/portal.html",
       "/portal",
-      "/play/*"
+      "/play/*",
+      "/account",
+      "/account.html"
     ]
   },
   "durable_objects": {
