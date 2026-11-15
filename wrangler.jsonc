@@ -9,7 +9,8 @@
     "run_worker_first": [
       "/api/*",
       "/portal.html",
-      "/portal"
+      "/portal",
+      "/play/*"
     ]
   },
   "durable_objects": {
