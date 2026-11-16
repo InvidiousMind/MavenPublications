@@ -26,6 +26,17 @@ const sortCases=records=>records.sort((a,b)=>(a.sortOrder??originalCaseOrder[a.c
 export default {async fetch(request,env){const url=new URL(request.url);if((url.pathname.startsWith('/api/')||url.pathname.startsWith('/play/'))){if(!env.VAULT)return json({error:'The case portal is not configured yet.'},503);return env.VAULT.get(env.VAULT.idFromName('maven-case-vault-v1')).fetch(request);}const response=await env.ASSETS.fetch(request);if(['/portal.html','/portal','/account.html','/account'].includes(url.pathname)){const headers=new Headers(response.headers);headers.set('Cache-Control','no-store');if(['/account','/account.html'].includes(url.pathname))headers.set('Cross-Origin-Opener-Policy','same-origin-allow-popups');return new Response(response.body,{status:response.status,statusText:response.statusText,headers});}return response;}};
 export class CaseVault{
  constructor(state,env){this.state=state;this.db=state.storage;this.env=env;}
+ async reserveDisplayName(tx,userId,base){
+ base=base.normalize('NFC').trim().replace(/\s+/g,' ');let candidate=base,index=0;
+ while(true){const key='display-name:'+await hash(candidate.toLowerCase()),owner=await tx.get(key);if(!owner||owner===userId){await tx.put(key,userId);return candidate;}candidate=base+' ('+(++index)+')';}
+ }
+ async memberDisplayName(tx,userId,user,profileName){
+ const base=profileName||user.profileName||user.displayName;if(!base)return null;
+ if(user.profileName===base&&user.displayName)return user.displayName;
+ if(user.displayName){const old='display-name:'+await hash(user.displayName.normalize('NFC').trim().replace(/\s+/g,' ').toLowerCase());if(await tx.get(old)===userId)await tx.delete(old);}
+ return this.reserveDisplayName(tx,userId,base);
+ }
+ async ensureDisplayNames(){if(await this.db.get('display-names-ready'))return;await this.db.transaction(async tx=>{if(await tx.get('display-names-ready'))return;const accounts=[];let after;while(true){const rows=await tx.list({prefix:'account:',limit:500,...(after?{startAfter:after}:{})});accounts.push(...rows);if(rows.size<500)break;after=[...rows.keys()].at(-1);}accounts.sort((a,b)=>(a[1].created||0)-(b[1].created||0)||a[0].localeCompare(b[0]));for(const [key,user]of accounts){if(!user.displayName)continue;const base=user.profileName||user.displayName,displayName=await this.reserveDisplayName(tx,key.slice(8),base);await tx.put(key,{...user,profileName:base,displayName});}await tx.put('display-names-ready',true);});}
  async ensureCases(){await this.state.blockConcurrencyWhile(async()=>{if(!await this.db.get('case:the-last-recording'))await this.db.put('case:the-last-recording',{caseId:'the-last-recording',title:'The Last Recording',synopsis:'A title in the MAVEN Mysteries mystery-sheet series.',status:'draft',created:Date.now(),updated:Date.now()});});}
  async alarm(){const now=Date.now();for(const prefix of ['session:','rate:','google-nonce:']){const rows=await this.db.list({prefix});for(const [key,v]of rows)if(v.expires<now)await this.db.delete(key);}await this.db.setAlarm(now+3600000);}
  async session(req){const token=(req.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-maven=([a-f0-9]{48})(?:;|$)/)?.[1];if(!token)return null;const s=await this.db.get('session:'+await hash(token));if(!s||s.expires<Date.now())return null;if(s.role==='admin'){const master=await this.db.get('master');if(master?.version!==s.version)return null;}else if(s.role==='customer'){const user=await this.db.get('account:'+s.userId);if(!user||user.version!==s.version)return null;}else{const buyer=await this.db.get('buyer:'+s.codeHash);if(!buyer||buyer.ownerId||buyer.revoked||expiresAt(buyer)<=Date.now()||s.accessVersion!==buyer.accessVersion||s.caseId!==buyer.caseId||(s.productId||'mysteries')!==(buyer.productId||'mysteries'))return null;}return s;}
@@ -42,6 +53,7 @@ export class CaseVault{
   for(const [key] of grants){const buyerKey='buyer:'+key.split(':')[2],buyer=await tx.get(buyerKey);if(buyer?.ownerId===userId){if(buyer.source==='admin')await tx.delete(buyerKey);else{const {ownerId,customerId,label,...record}=buyer;await tx.put(buyerKey,{...record,label:'Deleted account',revoked:true,accessVersion:random()});}}await tx.delete(key);}
   const sessions=await tx.list({prefix:'session:'});for(const [key,session] of sessions)if(session.role==='customer'&&session.userId===userId)await tx.delete(key);
   const nameKey='account-name:'+await hash(current.username);if(await tx.get(nameKey)===userId)await tx.delete(nameKey);
+  if(current.displayName){const displayKey='display-name:'+await hash(current.displayName.normalize('NFC').trim().replace(/\s+/g,' ').toLowerCase());if(await tx.get(displayKey)===userId)await tx.delete(displayKey);}
   if(current.googleIdentityKey&&await tx.get(current.googleIdentityKey)===userId)await tx.delete(current.googleIdentityKey);
   await tx.delete('account:'+userId);deleted=true;
  });
@@ -72,11 +84,11 @@ export class CaseVault{
    if(currentSession?.role!=='customer'||currentSession.userId!==active.userId||currentSession.version!==active.version){result={error:'Your MAVEN sign-in changed. Sign in again before linking.',status:401};return;}
    const user=await tx.get('account:'+active.userId);if(!user||user.version!==active.version){result={error:'Your account changed. Sign in again.',status:401};return;}
    if(linkedId&&linkedId!==active.userId||user.googleIdentityKey&&user.googleIdentityKey!==identityKey){result={error:'This Google account is already linked to a different MAVEN account.',status:409};return;}
-   const version=random();await tx.put(identityKey,active.userId);await tx.put('account:'+active.userId,{...user,googleIdentityKey:identityKey,googleEmail:identity.email,displayName:identity.displayName||user.displayName||null,version});result={userId:active.userId,version,username:user.username,displayName:user.displayName||null,linked:true};return;
+   const displayName=await this.memberDisplayName(tx,active.userId,user,identity.displayName);const version=random();await tx.put(identityKey,active.userId);await tx.put('account:'+active.userId,{...user,googleIdentityKey:identityKey,googleEmail:identity.email,displayName,profileName:identity.displayName||user.profileName||user.displayName||null,version});result={userId:active.userId,version,username:user.username,displayName:user.displayName||null,linked:true};return;
   }
-  if(linkedId){const user=await tx.get('account:'+linkedId);if(!user||user.googleIdentityKey!==identityKey){result={error:'Unable to open this account. Contact MAVEN Publications.',status:409};return;}await tx.put('account:'+linkedId,{...user,googleEmail:identity.email,displayName:identity.displayName||user.displayName||null});result={userId:linkedId,version:user.version,username:user.username};return;}
+  if(linkedId){const user=await tx.get('account:'+linkedId);if(!user||user.googleIdentityKey!==identityKey){result={error:'Unable to open this account. Contact MAVEN Publications.',status:409};return;}const displayName=await this.memberDisplayName(tx,linkedId,user,identity.displayName);await tx.put('account:'+linkedId,{...user,googleEmail:identity.email,displayName,profileName:identity.displayName||user.profileName||user.displayName||null});result={userId:linkedId,version:user.version,username:user.username};return;}
   const nameKey='account-name:'+await hash(newUsername);if(await tx.get(nameKey)){result={error:'Please try Google sign-in again.',status:409};return;}
-  const version=random();await tx.put(identityKey,newId);await tx.put(nameKey,newId);await tx.put('account:'+newId,{username:newUsername,googleIdentityKey:identityKey,googleEmail:identity.email,displayName:identity.displayName||null,version,created:Date.now()});result={userId:newId,version,username:newUsername,created:true};
+  const displayName=identity.displayName?await this.reserveDisplayName(tx,newId,identity.displayName):null;const version=random();await tx.put(identityKey,newId);await tx.put(nameKey,newId);await tx.put('account:'+newId,{username:newUsername,googleIdentityKey:identityKey,googleEmail:identity.email,displayName,profileName:identity.displayName||null,version,created:Date.now()});result={userId:newId,version,username:newUsername,created:true};
  });
  if(result.error)return json({error:result.error},result.status);
  const response=await this.loginSession({role:'customer',userId:result.userId,version:result.version,authMethod:'google',authTime:Date.now()},b.remember?2592000:28800);
@@ -87,6 +99,7 @@ export class CaseVault{
  async route(req){const u=new URL(req.url),p=u.pathname,post=req.method==='POST';if(!['GET','POST'].includes(req.method))return json({error:'Method not allowed.'},405);
  if(post&&req.headers.get('origin')!==u.origin)return json({error:'Request origin rejected.'},403);
  if(post&&Number(req.headers.get('content-length')||0)>6*1024*1024)return json({error:'File exceeds 5 MB.'},413);
+ await this.ensureDisplayNames();
  if(p==='/api/account/google/challenge'&&post)return this.googleChallenge(req);
  if(p==='/api/account/google'&&post)return this.googleAuth(req);
  if(['/api/account/register','/api/account/login','/api/account/recover','/api/account/password'].includes(p)&&post)return json({error:'Use Google to create an account or sign in.'},403);
