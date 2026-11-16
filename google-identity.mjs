@@ -4,5 +4,6 @@ const googleKeys=createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v
 export async function verifyGoogleCredential(credential,nonce){
  const {payload}=await jwtVerify(credential,googleKeys,{algorithms:['RS256'],issuer:['https://accounts.google.com','accounts.google.com'],audience:GOOGLE_CLIENT_ID,requiredClaims:['sub','exp','iat','nonce'],maxTokenAge:'10m',clockTolerance:5});
  if(payload.nonce!==nonce||typeof payload.sub!=='string'||payload.sub.length>255||!payload.sub||payload.email_verified!==true||typeof payload.email!=='string'||payload.email.length>320)throw Error('Invalid Google identity');
- return {subject:payload.sub,email:payload.email};
+ const displayName=typeof payload.name==='string'?payload.name.replace(/[\u0000-\u001f\u007f-\u009f]/g,'').trim().slice(0,160):'';
+ return {subject:payload.sub,email:payload.email,displayName};
 }
