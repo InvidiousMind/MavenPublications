@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {CaseVault} from './worker.mjs';
+class Storage{m=new Map();queue=Promise.resolve();async get(k){return structuredClone(this.m.get(k));}async put(k,v){this.m.set(k,structuredClone(v));}async delete(k){return this.m.delete(k);}async list({prefix='',limit=10000,startAfter}={}){return new Map([...this.m].filter(([k])=>k.startsWith(prefix)&&(!startAfter||k>startAfter)).sort(([a],[b])=>a.localeCompare(b)).slice(0,limit));}async transaction(f){const r=this.queue.then(()=>f(this));this.queue=r.catch(()=>{});return r;}async setAlarm(){}}
+const db=new Storage(),vault=new CaseVault({storage:db,blockConcurrencyWhile:f=>f()},{ADMIN_BOOTSTRAP_CODE:'Synthetic-admin-123456'});let ip=0;
+async function call(path,data,cookie){const multipart=data instanceof FormData;return vault.fetch(new Request('https://maven.test'+path,{method:data===undefined?'GET':'POST',headers:{origin:'https://maven.test','CF-Connecting-IP':String(++ip),...(cookie?{cookie}:{}),...(!multipart?{'content-type':'application/json'}:{})},body:data===undefined?undefined:multipart?data:JSON.stringify(data)}));}
+const token=r=>r.headers.get('set-cookie')?.split(';')[0];
+let r=await call('/api/login',{role:'admin',code:'Synthetic-admin-123456'});const admin=token(r),id='a'.repeat(48),otherId='b'.repeat(48),version='v1';
+await db.put('account:'+id,{username:'vip-test',created:Date.now(),version});await db.put('account:'+otherId,{username:'standard-test',created:Date.now(),version});
+const member=token(await vault.loginSession({role:'customer',userId:id,version})),other=token(await vault.loginSession({role:'customer',userId:otherId,version}));
+let detail=await vault.managedAccount(id);assert.equal(detail.vip,false);
+assert.equal((await call('/api/admin/account/vip',{userId:id,vip:true,accessRevision:0},member)).status,403);
+assert.equal((await call('/api/admin/account/vip',{userId:id,vip:'true',accessRevision:0},admin)).status,400);
+const expiry=new Date(Date.now()+86400000*365).toISOString().slice(0,10);
+assert.equal((await call('/api/admin/account/access',{userId:id,accessRevision:0,changes:[{key:'app:maven-talks-a1',enabled:true,expiresOn:expiry}]},admin)).status,200);
+assert.equal((await call('/api/admin/account/vip',{userId:id,vip:true,accessRevision:0},admin)).status,409);
+assert.equal((await call('/api/admin/account/vip',{userId:id,vip:true,accessRevision:1},admin)).status,200);
+assert.equal(await vault.hasAccess({role:'customer',userId:id},'speaking-jeopardy-c2'),true);
+assert.equal(await vault.hasAccess({role:'customer',userId:otherId},'speaking-jeopardy-c2'),false);
+assert.equal(await vault.hasAccess({role:'customer',userId:id},'unknown'),false);
+await db.put('case:new-after-vip',{caseId:'new-after-vip',title:'New release',status:'published'});await db.put('case:unpublished',{caseId:'unpublished',title:'Draft',status:'draft'});
+assert.equal(await vault.hasAccess({role:'customer',userId:id},'mysteries','new-after-vip'),true);assert.equal(await vault.hasAccess({role:'customer',userId:id},'mysteries','unpublished'),false);
+await db.put('case:the-empty-frame',{caseId:'the-empty-frame',title:'The Empty Frame',status:'published'});
+let me=await (await call('/api/account/me',undefined,member)).json();assert.equal(me.vip,true);assert.ok(me.items.some(i=>i.caseId==='new-after-vip'&&i.vip&&i.expires===null));assert.ok(!me.items.some(i=>i.caseId==='unpublished'));assert.equal(me.items.filter(i=>i.productId==='maven-talks-a1').length,1);assert.ok(me.freeItems.some(i=>i.caseId==='the-empty-frame'));
+detail=await vault.managedAccount(id);assert.ok(detail.products.find(p=>p.productId==='maven-talks-a1').vipAccess);assert.equal(detail.products.find(p=>p.caseId==='unpublished').vipAccess,false);
+assert.equal((await call('/api/admin/account/access',{userId:id,accessRevision:2,changes:[]},admin)).status,409);
+const html='<html><header></header><script>/* synthetic MAVEN Jeopardy */</script></html>',bytes=new TextEncoder().encode(html);await db.put('game:speaking-jeopardy-c2',{version:'test',size:bytes.length,chunks:1});await db.put('game-chunk:test:0',bytes);assert.equal((await call('/play/speaking-jeopardy-c2',undefined,member)).status,200);assert.equal((await call('/play/speaking-jeopardy-c2',undefined,other)).status,403);assert.equal((await call('/api/files?case=new-after-vip',undefined,member)).status,200);assert.equal((await call('/api/files?case=unpublished',undefined,member)).status,403);
+assert.equal((await call('/api/admin/account/vip',{userId:id,vip:false,accessRevision:2},admin)).status,200);
+assert.equal((await call('/play/speaking-jeopardy-c2',undefined,member)).status,403);assert.equal((await call('/api/files?case=new-after-vip',undefined,member)).status,403);
+assert.equal(await vault.hasAccess({role:'customer',userId:id},'speaking-jeopardy-c2'),false);assert.equal(await vault.hasAccess({role:'customer',userId:id},'maven-talks-a1'),true);assert.equal(await vault.hasAccess({role:'customer',userId:id},'mysteries','the-empty-frame'),true);assert.equal(await vault.hasAccess({role:'customer',userId:id},'mysteries','new-after-vip'),false);
+me=await (await call('/api/account/me',undefined,member)).json();assert.equal(me.vip,false);assert.ok(!me.items.some(i=>i.vip));
+assert.equal((await call('/api/admin/account/vip',{userId:otherId,vip:true,accessRevision:0},admin)).status,200);await vault.deleteCustomerAccount(otherId,version);assert.equal((await call('/api/account/me',undefined,other)).status,401);assert.equal(await vault.hasAccess({role:'customer',userId:otherId},'speaking-jeopardy-c2'),false);
+console.log('PASS VIP: admin-only validated updates, revision conflicts, existing and future products, draft exclusion, dashboard deduplication, immediate removal, prior grant preservation, free mysteries, standard isolation and deleted member denial.');
