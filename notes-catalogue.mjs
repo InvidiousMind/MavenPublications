@@ -1,0 +1,8 @@
+export const noteLevels=['a1','a2','b1','b2','c1','c2'];
+export const notePacks={student:'Student Notes',teacher:'Teacher Notes',workbook:'Workbook Notes'};
+export const noteExtras=[['grammar-at-a-glance','Grammar at a Glance'],['verb-reference-guide','Verb Reference Guide'],['question-builder','Question Builder'],['common-mistakes','Common Mistakes and Quick Fixes'],['vocabulary-by-topic','Vocabulary by Topic'],['numbers-dates-times','Numbers, Dates and Times'],['everyday-english','Everyday English Phrasebook'],['pronunciation-help','Pronunciation Help'],['writing-models','Writing Models'],['independent-practice','Independent Practice Activity Bank'],['index','Index']];
+export const noteProducts=Object.fromEntries(noteLevels.flatMap(level=>Object.entries(notePacks).map(([pack,title])=>['maven-notes-'+level+'-'+pack,'MAVEN '+level.toUpperCase()+' '+title])));
+export const isNotesProduct=id=>id==='maven-notes'||Object.hasOwn(noteProducts,id);
+export const noteSlots=(level,pack)=>[...Array.from({length:12},(_,i)=>({id:'unit-'+(i+1),title:'Unit '+(i+1),category:'units',order:i+1})),...(pack==='student'?noteExtras.map(([id,title],i)=>({id,title:id==='index'?level.toUpperCase()+' Index':title,category:'extras',order:i+1})):[]),...(pack!=='workbook'?[{id:'interactive-app',title:level.toUpperCase()+' Interactive '+notePacks[pack],category:'interactive',order:1}]:[])];
+export const validNotes=(level,pack)=>noteLevels.includes(level)&&Object.hasOwn(notePacks,pack);
+export const notesDestination=id=>id==='maven-notes'?'/maven-notes#collection':Object.hasOwn(noteProducts,id)?'/maven-notes?level='+id.split('-')[2]+'&pack='+id.split('-')[3]+'#collection':null;
