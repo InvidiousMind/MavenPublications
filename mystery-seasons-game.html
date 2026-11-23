@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/maven-icon.svg" type="image/svg+xml">
+<title>The Last Loan | MAVEN Mystery Seasons</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.workspace iframe{width:100%;height:65vh;border:1px solid #b79a68}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere} @media(max-width:720px){.workspace{display:block}.workspace[data-tab="journal"] .evidence,.workspace[data-tab="evidence"] .journal{display:none}}@media(min-width:721px){.mobile-tabs{display:none}}
+</style>
+</head>
+<body>
+<header><a href="/products">MAVEN Publications</a><strong>MAVEN Police Department</strong><a href="/account#products/seasons">My products</a></header>
+<main>
+<h1>The Last Loan</h1>
+<p>Season 1 · Episode 1 · High-Value Theft</p>
+<p id="status" class="status" role="status"></p>
+<div id="entry"></div><div id="session" hidden>
+<h2 id="room-heading"></h2><p id="phase"></p><p id="rejoin" class="rejoin"></p>
+<div id="controls"></div><div id="screen"></div><div id="workspace"></div>
+</div>
+</main>
+<script type="module">
+import {briefing, transcript, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
+const $ = id=>document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const isHost = params.get('host')==='1';
+let room = params.get('room')||'', secret = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
+let state, refreshing=false;
+const make = (tag,text) => {const e=document.createElement(tag);if(text)e.textContent=text;return e;};
+const report = message => {$('status').textContent=message;};
+const safely = handler => async (...args)=>{try{await handler(...args);}catch(error){report(error.message);}};
+function button(text,run) {
+  const e=make('button',text);e.type='button';
+  e.onclick=safely(async()=>{e.disabled=true;try{await run();}finally{e.disabled=false;}});
+  return e;
+}
+const endpoint = (action, extra={})=>'/api/seasons/'+action+'?'+new URLSearchParams({room,...extra});
+const asset = name=>endpoint('asset',{name});
+async function api(action, payload) {
+  const response=await fetch(endpoint(action),{method:payload?'POST':'GET',headers:{...(payload?{'content-type':'application/json'}:{}),...(secret?{'x-room-credential':secret}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
+  const result=await response.json();
+  if(!response.ok) throw Error(result.error||'Request failed.');
+  return result;
+}
+function link(label,name) {
+  const a=make('a',label); a.href=asset(name); a.target='_blank'; a.rel='noopener'; return a;
+}
+function showText(label,name) {
+  return button(label,async()=>{
+    const response=await fetch(asset(name));
+    if(!response.ok)throw Error('This text is unavailable.');
+    const section=make('article');section.append(make('h3',label),make('pre',await response.text()),button('Close',()=>section.remove()));
+    $('screen').append(section);
+  });
+}
+async function update(type,extra={}){
+  render(await api('room',{type,...extra})); report('');
+}
+function setRoom(code,credential=''){
+  room=code;secret=credential;
+  if(credential){
+    sessionStorage.setItem('seasons:'+room,credential);
+  }
+  params.set('room',room);history.replaceState(null,'','?'+params);refresh();
+}
+async function refresh(){
+  if(!room||refreshing)return;
+  refreshing=true;
+  try{render(await api('state'));}catch(error){report(error.message);}finally{refreshing=false;}
+}
+function play(clips,title,finished){
+  const box=make('article'), video=make('video'), heading=make('h3',title);
+  let index=0;
+  video.controls=true;video.playsInline=true;video.preload='auto';
+  const fullscreen=button('Open full screen',async()=>{if(video.requestFullscreen)await video.requestFullscreen();else if(video.webkitEnterFullscreen)video.webkitEnterFullscreen();});
+  const start=()=>{video.src=asset(clips[index]);video.play().catch(()=>{});};
+  video.addEventListener('ended',safely(async()=>{
+    index++;
+    if(index<clips.length)start();
+    else{video.hidden=true;await finished?.();}
+  }));
+  video.addEventListener('error',()=>report('Video unavailable. Ask the host to check the media upload.'));
+  box.append(heading,video,fullscreen,button('Close player',()=>{video.pause();box.remove();}));
+  $('screen').append(box);start();
+}
+function render(next){
+  state=next;
+  $('entry').hidden=true;$('session').hidden=false;
+  $('room-heading').textContent='Room '+room;
+  $('phase').textContent=({briefing:'Briefing Room',investigation:'Investigation',deduction:'Final deduction',feedback:'Host feedback',closed:'Case closed'})[state.phase];
+  if(secret)$('rejoin').textContent='Private rejoin code · '+secret;
+  const signature=JSON.stringify([state.phase,state.briefing,state.audit,state.outcome,state.reveal,state.players,state.player?.files]);
+  if(signature!==lastControls){lastControls=signature;renderControls();}
+  if(state.reaction?.active && activeReaction!==state.reaction.id){
+    activeReaction=state.reaction.id;
+    play([reactionFiles[state.outcome]+'.mp4'],'Chief Vance',isHost?()=>update('reaction-shown',{id:activeReaction}):null);
+  }
+  const files=JSON.stringify([state.player?.files,state.phase]);
+  if(files!==lastFiles && state.player){lastFiles=files;renderWorkspace(state.player);}
+}
+function renderControls(){
+  const controls=$('controls');controls.replaceChildren();
+  if(isHost && state.players){
+    const covered=new Set(state.players.flatMap(p=>p.files)).size;
+    controls.append(make('h3','Player roster'),make('p',covered+' of 6 files assigned'));
+    for(const player of state.players){
+      const group=make('fieldset');group.append(make('legend',player.name));
+      const picks=caseTitles.map(([id,title])=>{
+        const label=make('label'),input=make('input');input.type='checkbox';input.value=Number(id);input.checked=player.files.includes(Number(id));
+        const current=state.players.find(p=>p.files.includes(Number(id)));
+        label.append(input,document.createTextNode(' '+id+' · '+title+(current&&current.id!==player.id?' · '+current.name:'')));group.append(label);return input;
+      });
+      if(state.phase!=='closed')group.append(button('Save assignment',()=>update('assign',{player:player.id,files:picks.filter(i=>i.checked).map(i=>Number(i.value))})),button('Assign all six',()=>update('assign',{player:player.id,files:[1,2,3,4,5,6]})));
+      controls.append(group);
+    }
+    const actions=make('div');actions.className='actions';
+    if(state.briefing==='ready')actions.append(button('Play briefing',async()=>{await update('briefing');play(briefing.map(c=>c.filename),'The Last Loan · Briefing',()=>update('briefing-shown'));}));
+    if(state.briefing==='playing')actions.append(button('Mark briefing shown',()=>update('briefing-shown')));
+    if(state.phase==='briefing'&&state.briefing==='shown'){
+      const start=button('Start Investigation',()=>update('start'));start.disabled=covered!==6;actions.append(start);
+    }
+    if(state.phase==='investigation'&&!state.audit)actions.append(button('Unlock audit after discussion of all six files',()=>update('audit')));
+    if(state.phase==='investigation'&&state.audit)actions.append(button('Receive final deduction',()=>update('submit')));
+    if(state.phase==='deduction'){
+      for(const [label,outcome] of [['Correct','CORRECT'],['Wrong — Keep Investigating','WRONG_RETRY'],['Convict Anyway','CONVICT_ANYWAY']]){
+        actions.append(button(label,()=>update('outcome',{outcome})));
+      }
+    }
+    if(state.phase==='feedback') {
+      controls.append(make('p','Use the Master Solution to explain a contradiction without revealing the answer.'));
+      actions.append(button('Replay wrong deduction reaction',()=>update('outcome',{outcome:'WRONG_RETRY'})),button('Resume investigation',()=>update('resume')));
+    }
+    if(state.phase==='closed'&&state.outcome==='CORRECT'&&!state.reveal)actions.append(button('Authorise solution reveal',()=>update('reveal')));
+    controls.append(actions);
+    const hostLinks=make('nav');hostLinks.append(link('Host briefing guide','host-guide.pdf'),link('Master Solution · Host only','solution.pdf'),link('Host HTML','host.html'));controls.append(hostLinks);
+  }
+  const review=make('nav');review.append(link('Start Here','start.pdf'));
+  if(state.briefing==='shown'){
+    review.append(showText('Read Briefing Transcript',transcript),showText('Music credits',credit));
+    for(const clip of briefing.filter(c=>c.review_after_briefing))review.append(button(clip.label,()=>play([clip.filename],clip.label)));
+  }
+  if(state.audit)review.append(link('Open Evidence Audit','audit.pdf'));
+  if(state.outcome)review.append(showText('Read Chief’s Reaction',reactionFiles[state.outcome]+'.txt'));
+  if(state.reveal)review.append(make('p','The host has authorised the solution reveal.'));
+  controls.append(review);
+}
+function renderWorkspace(player){
+  const root=$('workspace');root.replaceChildren();
+  if(!player.files.length){root.append(make('p','Your assigned case files will open when the host starts the investigation.'));return;}
+  const nav=make('nav');root.append(nav);
+  const pane=make('div');pane.className='workspace';pane.dataset.tab='evidence';
+  const tabs=make('nav');tabs.className='mobile-tabs';
+  tabs.append(button('Evidence',()=>{pane.dataset.tab='evidence';}),button('Journal',()=>{pane.dataset.tab='journal';}));
+  root.append(tabs,pane);
+  function openFile(file){
+    activeFile=file;
+    const [,title]=caseTitles[file-1], prompts=player.prompts[file], evidence=make('article'),journal=make('article');
+    evidence.className='evidence';journal.className='journal';
+    const frame=make('iframe');frame.title='Case File '+file;frame.src=asset('case-'+file+'.pdf');
+    evidence.append(make('h3',title),link('Open case file in a new tab','case-'+file+'.pdf'),frame);
+    const draftKey='journal:'+room+':'+secret+':'+file;
+    const initial=JSON.parse(sessionStorage.getItem(draftKey)||'null')||state.player.journals[file]?.answers||[];
+    journal.append(make('h3','Investigation Journal '+file),make('p','Answer each prompt or explain what the evidence does not establish.'));
+    const fields=prompts.map((prompt,index)=>{
+      const label=make('label',prompt),input=make('textarea');input.maxLength=4000;input.value=initial[index]||'';input.disabled=state.phase==='closed';label.append(input);journal.append(label);return input;
+    });
+    const values=()=>fields.map(f=>f.value);
+    const save=async complete=>{
+      const submitted=values();
+      if(complete&&submitted.some(a=>!a.trim()))throw Error('Answer all four required prompts.');
+      await update('journal',{file,answers:submitted,complete});
+      if(JSON.stringify(values())===JSON.stringify(submitted))sessionStorage.removeItem(draftKey);
+      report(complete?'Journal marked complete.':'Draft saved.');
+    };
+    for(const input of fields)input.oninput=()=>sessionStorage.setItem(draftKey,JSON.stringify(values()));
+    if(state.phase!=='closed')journal.append(button('Save draft',()=>save(false)),button('Mark complete',()=>save(true)));
+    pane.replaceChildren(evidence,journal);
+  }
+  for(const file of player.files)nav.append(button('Case File '+file,()=>openFile(file)));
+  openFile(player.files.includes(activeFile)?activeFile:player.files[0]);
+}
+if(isHost){
+  $('entry').append(button('Begin Hosting a Live Session',async()=>{const result=await api('create',{});setRoom(result.code);}));
+}else{
+  const form=make('form');
+  const field=(title,value='')=>{const label=make('label',title),input=make('input');input.value=value;label.append(input);form.append(label);return input;};
+  const code=field('Six-character room code',room);code.maxLength=6;code.required=true;code.autocapitalize='characters';
+  form.append(make('p','Note the room code. After joining, save your private rejoin code if you need to move to another device.'));
+  const name=field('Guest name');name.maxLength=60;
+  const rejoin=field('Private rejoin code, if returning');rejoin.maxLength=64;
+  const join=make('button','Join Game Room');form.append(join);
+  form.onsubmit=safely(async event=>{event.preventDefault();room=code.value.trim().toUpperCase();const result=await api('join',{name:name.value,rejoin:rejoin.value.trim()});setRoom(result.code,result.secret);});
+  $('entry').append(form);
+  if(room){secret=sessionStorage.getItem('seasons:'+room)||'';if(secret)setRoom(room,secret);}
+}
+if(isHost&&room)refresh();
+setInterval(()=>{if((isHost&&room)||secret)refresh();},2500);
+</script>
+</body>
+</html>
