@@ -36,5 +36,13 @@
       "binding": "SEASONS_MEDIA",
       "bucket_name": "maven-mystery-seasons-private"
     }
-  ]
+  ],
+  "previews": {
+    "r2_buckets": [
+      {
+        "binding": "SEASONS_MEDIA",
+        "bucket_name": "maven-mystery-seasons-private"
+      }
+    ]
+  }
 }
