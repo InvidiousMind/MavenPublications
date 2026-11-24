@@ -38,7 +38,27 @@ function googleAccountSettings(data){$('google-link-state').textContent=data.goo
 function showAuth(){collectionRequest++;caseRequest++;googleRequest++;setupGoogle('login');$('account-loading').hidden=true;$('customer-dashboard').hidden=true;$('account-auth').hidden=false;$('unlocked-products').replaceChildren();currentItems=[];$('account-heading').textContent='Make yourself at home.';$('account-intro').textContent='Sign in, activate a product code once, and return to your unlocked products whenever you are ready.';}
 const element=(tag,text)=>{const node=document.createElement(tag);node.textContent=text;return node;};
 function productItems(items){const grouped=new Map();for(const item of items){const key=item.productId+':'+(item.caseId||''),old=grouped.get(key);if(!old||(item.status==='active'&&old.status!=='active')||(item.status===old.status&&item.expires>old.expires))grouped.set(key,item);}return [...grouped.values()].sort((a,b)=>(a.status==='active'?0:1)-(b.status==='active'?0:1)||a.title.localeCompare(b.title));}
+function seasonsCard(item){
+ const card=element('article','');card.className='unlocked-item';
+ card.append(element('h3',item.title));
+ const actions=element('div','');actions.className='member-overview-actions';
+ for(const [access,label,mode] of [[item.solo,item.solo?.started?'Continue Solo':'Play Solo','Solo'],[item.host,'Host a session','Hosting']]){
+  if(!access)continue;
+  const link=element('a',label);link.className='account-button';link.href=access.destination;actions.append(link);
+  if(access.expires)card.append(element('p',mode+' access ends '+new Date(access.expires+10800000).toISOString().slice(0,10)));
+ }
+ if(item.host&&!item.solo){
+  const access=element('details','');
+  const contact=element('a','Get in touch');contact.href='/index.html#contact';contact.className='text-button';
+  const activate=element('a','Activate a product code');activate.href='#activate';activate.className='text-button';
+  const links=element('div','');links.className='member-overview-actions';links.append(contact,activate);
+  access.append(element('summary','Get Solo access'),element('p','Solo licences are sold in person. If you already have a product code, activate it on this account.'),links);
+  card.append(actions,access);
+ }else card.append(actions);
+ return card;
+}
 function itemCard(item){
+ if(item.productId==='maven-mystery-seasons')return seasonsCard(item);
  const card=element('article','');card.className='unlocked-item'+(item.status==='active'?'':' inactive');card.append(element('h3',item.title));
  const status=element('p',item.vip?'Included with VIP · No expiry':item.free?'Included with your MAVEN account':item.status==='active'?'Active':item.status==='expired'?'Expired':'Access revoked');status.className='status';card.append(status);
  if(item.expires)card.append(element('p','Access ends '+new Date(item.expires+10800000).toISOString().slice(0,10)));
@@ -93,7 +113,7 @@ function renderSelectedCollection(category,parts=[]){
  }else if(category==='jeopardy'){
   const level=['original',...memberLevels].includes(parts[0])?parts[0]:'a1';collectionTabBar(section,'Jeopardy levels',[...memberLevels,'original'].map(l=>({key:l,title:l==='original'?'Original collection':l.toUpperCase(),path:'jeopardy/'+l})),level);section.append(element('h4',level==='original'?'Original mixed level collection':'Speaking Jeopardy '+level.toUpperCase()));showRows(rows.filter(i=>i.productId==='speaking-jeopardy'+(level==='original'?'':'-'+level)),'This collection is not unlocked yet.');
  }else if(category==='seasons'){
-  showRows(rows);
+  showRows(rows,'Activate an episode to see it here.');
  }else if(category==='mysteries'){
   const kind=['purchased','free'].includes(parts[0])?parts[0]:rows.length?'purchased':'free';collectionTabBar(section,'Mystery collections',[{key:'purchased',title:'Purchased mysteries',path:'mysteries/purchased'},{key:'free',title:'Original 10 · Free',path:'mysteries/free'}],kind);
   const list=kind==='free'?memberCollection.freeItems:rows;section.append(element('p',kind==='free'?'Your original 10 mysteries are always included with your account.':'Your purchased mysteries, together in one place.'));
