@@ -82,6 +82,16 @@ body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host
 #journal-review article{background:#fff9ec}
 #journal-review h3{color:#183c65}
 #journal-review p{white-space:pre-wrap}
+#journal-review.journal-detail-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;box-sizing:border-box}
+.journal-toolbar{display:flex;flex-wrap:wrap;gap:.5rem}
+#journal-submissions:not([hidden]){display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin-top:1rem}
+.journal-card{display:grid;gap:.35rem;align-content:start;min-height:7rem;margin:0;padding:.9rem;text-align:left;overflow-wrap:anywhere}
+.journal-card small{font-size:.82rem}
+.journal-card:disabled{opacity:1;background:#eee6d6;color:#485964;border-color:#b7a991}
+#journal-detail{max-width:60rem;margin:1rem auto;overflow-wrap:anywhere}
+#journal-detail article{padding:clamp(.75rem,3vw,1.5rem)}
+@media(max-width:620px){#journal-submissions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 .journal-references{display:flex;flex-wrap:wrap;align-items:center;gap:.45rem;margin:.3rem 0 .85rem}
 .journal-references select{max-width:100%;min-height:40px}
 .journal-references button{margin:0}
@@ -121,8 +131,12 @@ body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host
 </dialog>
 <dialog id="journal-review" aria-labelledby="journal-review-title">
   <h2 id="journal-review-title">Submitted investigation journals</h2>
-  <button type="button" id="journal-review-close">Close journals</button>
+  <div class="journal-toolbar">
+    <button type="button" id="journal-review-back" hidden>Back to journal grid</button>
+    <button type="button" id="journal-review-close">Close journals</button>
+  </div>
   <div id="journal-submissions"></div>
+  <div id="journal-detail" hidden></div>
 </dialog>
 <script type="module">
 import {briefingForEdition, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
@@ -160,7 +174,7 @@ async function readAsset(name,signal) {
 }
 const pdfView=$('pdf-view');
 let pdfLibrary;
-async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage,fromJournals=false}={}){
+async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage,backToJournals}={}){
   const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
   const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
   const image=pages.querySelector('img'), imageButton=$('pdf-image'), layer=pages.querySelector('.textLayer');
@@ -170,8 +184,8 @@ async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imag
   sheet.hidden=false;image.hidden=true;layer.replaceChildren();
   imageButton.hidden=true;imageButton.textContent='View exhibit image';
   let loading, documentPdf, rendering, pageNumber=startPage, enlarged=false;
-  $('pdf-journals-back').hidden=!fromJournals;
-  $('pdf-journals-back').onclick=()=>pdfView.close();
+  $('pdf-journals-back').hidden=!backToJournals;
+  $('pdf-journals-back').onclick=()=>{pdfView.close();backToJournals();};
   $('pdf-title').textContent=title;
   status.textContent='Loading document…';
   canvas.hidden=true;
@@ -397,33 +411,64 @@ function render(next){
   if(files!==lastFiles && state.player){lastFiles=files;renderWorkspace(state.player);}
 }
 const evidenceImageName=(file,page)=>'evidence-'+String(file).padStart(2,'0')+'-'+String(page).padStart(2,'0')+'.png';
-const journalReview=$('journal-review');
+const journalReview=$('journal-review'), journalGrid=$('journal-submissions'), journalDetail=$('journal-detail');
+const journalBack=$('journal-review-back');
+let selectedJournalCard;
+function showJournalGrid(restoreFocus=true){
+  journalReview.classList.remove('journal-detail-view');
+  journalGrid.hidden=false;journalDetail.hidden=true;journalBack.hidden=true;
+  $('journal-review-title').textContent='Submitted investigation journals';
+  if(restoreFocus)selectedJournalCard?.focus();
+  journalReview.scrollTop=0;
+}
+journalBack.onclick=()=>showJournalGrid();
 $('journal-review-close').onclick=()=>journalReview.close();
+journalReview.addEventListener('cancel',event=>{
+  if(journalDetail.hidden)return;
+  event.preventDefault();
+  showJournalGrid();
+});
+function renderJournalSubmission(entry,title){
+  const submission=make('article');
+  submission.append(make('h3',entry.name));
+  const list=make('ol'), prompts=state.journalPrompts?.[entry.file]??[];
+  entry.answers.forEach((answer,index)=>{
+    const item=make('li');if(prompts[index])item.append(make('strong',prompts[index]));
+    item.append(make('p',answer));
+    const refs=make('div');refs.className='journal-references';
+    (entry.references[index]??[]).forEach((page,refIndex)=>{
+      const label=String(page).padStart(2,'0'), image=evidenceImageName(entry.file,page);
+      refs.append(button('Reference '+(refIndex+1)+' · Evidence '+label,()=>
+        viewPdf(title+' · Evidence '+label,'case-'+entry.file+'.pdf',{
+          firstPage:page,lastPage:page,backToJournals:showJournalGrid,
+          imageForPage:()=>state.terminalImages?.includes(image)?image:undefined
+        })));
+    });
+    item.append(refs);list.append(item);
+  });
+  submission.append(list);return submission;
+}
 async function reviewJournals(){
   const entries=await api('submitted-journals');
-  const area=$('journal-submissions');area.replaceChildren();
-  if(!entries.length)area.append(make('p','No journals have been submitted yet.'));
-  for(const entry of entries){
-    const card=make('article');
-    const [,title]=caseTitles[entry.file-1];
-    card.append(make('h3',entry.name+' · Case File '+entry.file+' · '+title));
-    const list=make('ol');
-    const prompts=state.journalPrompts?.[entry.file]??[];
-    entry.answers.forEach((answer,index)=>{
-      const item=make('li');if(prompts[index])item.append(make('strong',prompts[index]));
-      item.append(make('p',answer));
-      const refs=make('div');refs.className='journal-references';
-      (entry.references[index]??[]).forEach((page,refIndex)=>{
-        const trigger=button('Reference '+(refIndex+1)+' · Evidence '+String(page).padStart(2,'0'),()=>
-          viewPdf(title+' · Evidence '+String(page).padStart(2,'0'),'case-'+entry.file+'.pdf',
-            {firstPage:page,lastPage:page,fromJournals:true,
-              imageForPage:()=>state.terminalImages?.includes(evidenceImageName(entry.file,page))?evidenceImageName(entry.file,page):undefined}));
-        refs.append(trigger);
-      });
-      item.append(refs);list.append(item);
+  if(journalReview.open)return;
+  journalGrid.replaceChildren();
+  for(const [id,title] of caseTitles){
+    const submissions=entries.filter(entry=>entry.file===Number(id));
+    const card=button('',()=>{
+      selectedJournalCard=card;
+      journalReview.classList.add('journal-detail-view');
+      journalGrid.hidden=true;journalDetail.hidden=false;journalBack.hidden=false;
+      $('journal-review-title').textContent='Case File '+id+' · '+title;
+      journalDetail.replaceChildren(...submissions.map(entry=>renderJournalSubmission(entry,title)));
+      journalBack.focus();journalReview.scrollTop=0;
     });
-    card.append(list);area.append(card);
+    card.className='journal-card';
+    card.disabled=!submissions.length;
+    card.append(make('small','Case File '+id),make('strong',title),
+      make('small',submissions.length?submissions.map(entry=>entry.name).join(', '):'Awaiting submission'));
+    journalGrid.append(card);
   }
+  showJournalGrid(false);
   journalReview.showModal();
 }
 function renderControls(){
