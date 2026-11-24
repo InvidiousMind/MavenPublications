@@ -18,3 +18,6 @@
 !mystery-seasons-game.html
 !seasons-content.mjs
 !maven-icon.svg
+!pdf-viewer/
+!pdf-viewer/*.mjs
+!pdf-viewer/LICENSE
