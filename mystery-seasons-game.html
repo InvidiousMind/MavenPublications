@@ -21,6 +21,23 @@
 #pdf-pages canvas{display:block;margin:auto;background:white}
 #pdf-layout{display:flex;flex-direction:column;height:100%;min-height:0}
 button[aria-pressed=true]{outline:2px solid #b79a68;outline-offset:2px}
+.player-session{max-width:54rem;margin:auto}
+.player-session #room-heading,.player-session #phase{display:inline-block;margin:.65rem 1rem .4rem 0;font:600 .9rem system-ui}
+.player-session #rejoin{margin:0 0 1rem;color:#49596c;font-size:.85rem}
+.player-session #controls>details{margin:.6rem 0;padding:.7rem .85rem;border-color:#d7dfe7;border-radius:.5rem;background:#fff}
+.player-session summary{cursor:pointer;color:#183c65;font-weight:650}
+.player-session #controls nav{margin-top:.7rem}
+.player-session #controls nav button{background:#fff;color:#183c65;border-color:#d7dfe7}
+.case-picker{display:flex;flex-direction:column;gap:.35rem;margin:1.2rem 0 .65rem;font-weight:650;color:#183c65}
+.case-picker select{width:100%;min-height:44px;padding:.65rem;font:inherit;color:#183c65;background:#fff;border:1px solid #aab8c8;border-radius:.5rem}
+.case-panel{margin:.65rem 0;padding:clamp(.85rem,3vw,1.6rem);background:#fff;border:1px solid #d7dfe7;border-radius:.65rem}
+.case-panel h3{margin:0 0 .8rem;font-size:clamp(1.35rem,4vw,1.9rem)}
+.case-panel h4{margin:0 0 .55rem;color:#183c65}
+.evidence-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.45rem;margin-bottom:1.15rem}
+.evidence-grid button{min-height:44px;padding:.35rem;background:#edf2f7;color:#183c65;border-color:#d3dfeb;font-variant-numeric:tabular-nums}
+.evidence-grid button:hover{background:#dce7f2}
+.case-panel section{margin-top:1rem;padding-top:1rem;border-top:1px solid #d7dfe7}
+@media(max-width:420px){.case-panel>button{width:100%}}
 </style>
 </head>
 <body>
@@ -261,6 +278,7 @@ function play(clips,title,finished){
 function render(next){
   state=next;
   $('entry').hidden=true;$('session').hidden=false;
+  $('session').classList.toggle('player-session',!!state.player);
   $('room-heading').textContent='Room '+room;
   $('phase').textContent=({briefing:'Briefing Room',investigation:'Investigation',deduction:'Final deduction',feedback:'Host feedback',closed:'Case closed'})[state.phase];
   $('rejoin').textContent=privateCode?'Private rejoin code · '+privateCode:secret?'Rejoin with your existing code to receive a six-character code.':'';
@@ -274,7 +292,7 @@ function render(next){
   if(files!==lastFiles && state.player){lastFiles=files;renderWorkspace(state.player);}
 }
 function renderControls(){
-  const controls=$('controls');controls.replaceChildren();
+  const controls=$('controls'), referenceOpen=controls.querySelector('details')?.open;controls.replaceChildren();
   if(isHost && state.players){
     const covered=new Set(state.players.flatMap(p=>p.files)).size;
     controls.append(make('h3','Player roster'),make('p',covered+' of 6 files assigned'));
@@ -314,26 +332,40 @@ function renderControls(){
     review.append(showText('Read Briefing Transcript',transcript),showText('Music credits',credit));
     for(const clip of briefing.filter(c=>c.review_after_briefing))review.append(button(clip.label,()=>play([clip.filename],clip.label)));
   }
-  if(state.audit)review.append(link('Open Evidence Audit','audit.pdf'));
+  if(state.audit)(isHost?review:controls).append(link('Open Evidence Audit','audit.pdf'));
   if(state.outcome)review.append(showText('Read Chief’s Reaction',reactionFiles[state.outcome]+'.txt'));
   if(state.reveal)review.append(make('p','The host has authorised the solution reveal.'));
-  controls.append(review);
+  if(isHost)controls.append(review);
+  else{
+    const reference=make('details');
+    reference.open=!!referenceOpen;
+    reference.append(make('summary','Briefing & resources'),review);
+    controls.append(reference);
+  }
 }
 function renderWorkspace(player){
   const root=$('workspace');root.replaceChildren();
   if(!player.files.length){root.append(make('p','Your assigned case files will open when the host starts the investigation.'));return;}
-  const nav=make('nav');root.append(nav);
+  const select=make('select');
+  const picker=make('label','Case file');
+  picker.className='case-picker';
+  picker.append(select);
+  if(player.files.length>1)root.append(picker);
   const pane=make('article');
+  pane.className='case-panel';
   root.append(pane);
   function openFile(file){
     activeFile=file;
-    for(const tab of nav.querySelectorAll('button'))tab.setAttribute('aria-pressed',String(Number(tab.dataset.file)===file));
+    select.value=String(file);
     const [,title]=caseTitles[file-1], prompts=player.prompts[file], journal=make('section');
     const submenu=make('nav');
+    submenu.className='evidence-grid';
     submenu.setAttribute('aria-label','Case File '+file+' contents');
     for(let page=1;page<=10;page++){
       const label='Evidence '+String(page).padStart(2,'0');
-      submenu.append(button(label,()=>viewPdf(title+' · '+label,'case-'+file+'.pdf',{firstPage:page,lastPage:page})));
+      const item=button(String(page).padStart(2,'0'),()=>viewPdf(title+' · '+label,'case-'+file+'.pdf',{firstPage:page,lastPage:page}));
+      item.setAttribute('aria-label',label);
+      submenu.append(item);
     }
     journal.hidden=true;
     const journalButton=button('Investigation Journal',()=>{
@@ -344,7 +376,7 @@ function renderWorkspace(player){
     journal.id='case-journal-'+file;
     journalButton.setAttribute('aria-controls',journal.id);
     journalButton.setAttribute('aria-expanded','false');
-    submenu.append(journalButton);
+
     const draftKey='journal:'+room+':'+secret+':'+file;
     const initial=JSON.parse(sessionStorage.getItem(draftKey)||'null')||state.player.journals[file]?.answers||[];
     journal.append(make('h3','Investigation Journal '+file),make('p','Answer each prompt or explain what the evidence does not establish.'));
@@ -361,13 +393,14 @@ function renderWorkspace(player){
     };
     for(const input of fields)input.oninput=()=>sessionStorage.setItem(draftKey,JSON.stringify(values()));
     if(state.phase!=='closed')journal.append(button('Save draft',()=>save(false)),button('Mark complete',()=>save(true)));
-    pane.replaceChildren(make('h3',title),submenu,journal);
+    pane.replaceChildren(make('h3','Case File '+file+' · '+title),make('h4','Evidence'),submenu,journalButton,journal);
   }
   for(const file of player.files){
-    const tab=button('Case File '+file,()=>openFile(file));
-    tab.dataset.file=file;
-    nav.append(tab);
+    const option=make('option',file+' · '+caseTitles[file-1][1]);
+    option.value=file;
+    select.append(option);
   }
+  select.onchange=()=>openFile(Number(select.value));
   openFile(player.files.includes(activeFile)?activeFile:player.files[0]);
 }
 if(isProduct){
