@@ -174,23 +174,50 @@ async function route({db,env,session:readSession,limited},request) {
     if (await limited(request,'seasons-join')) return error('Too many joins. Try again later.',429);
     const data = await request.json();
     const name = typeof data.name==='string'?data.name.trim():'';
-    const rejoin = data.rejoin;
-    if (rejoin ? !/^[a-f0-9]{64}$/.test(rejoin) : !name || name.length>60) return error('Enter a name or a valid private rejoin code.');
-    const secret = rejoin || token();
+    const rejoin = typeof data.rejoin==='string' ? data.rejoin.trim().toUpperCase() : '';
+    const legacy = /^[A-F0-9]{64}$/.test(rejoin);
+    if (rejoin ? !legacy && !/^[A-HJ-NP-Z2-9]{6}$/.test(rejoin) : !name || name.length>60) {
+      return error('Enter a name or a valid private rejoin code.');
+    }
+    const secret = token();
     const credential = await digest(secret);
+    const lookup = rejoin ? await digest(legacy ? rejoin.toLowerCase() : code+':'+rejoin) : null;
     const result = await db.transaction(async tx=>{
       const room = await tx.get(key);
-      if (!isOpen(room)) return 'Room not available.';
-      if (rejoin) return room.players.some(p=>p.credential===credential) ? null : 'Rejoin code not recognised.';
-      if (room.phase==='closed' || room.players.length>=6) return 'This room is closed or full.';
-      room.players.push({id:crypto.randomUUID(),name,credential,files:[],journals:{}});
+      if (!isOpen(room)) return {error:'Room not available.'};
+      let player;
+      if (rejoin) {
+        player = room.players.find(p=>legacy ? !p.rejoin && p.credential===lookup : p.rejoin===lookup);
+        if (!player) return {error:'Rejoin code not recognised.'};
+      } else {
+        if (room.phase==='closed' || room.players.length>=6) return {error:'This room is closed or full.'};
+        player = {id:crypto.randomUUID(),name,files:[],journals:{}};
+        room.players.push(player);
+      }
+      let privateCode = legacy ? '' : rejoin;
+      if (!privateCode) {
+        for (let attempt=0;attempt<8;attempt++) {
+          const candidate = roomCode(), hash = await digest(code+':'+candidate);
+          if (candidate!==code && !room.players.some(p=>p.rejoin===hash)) {
+            privateCode = candidate;
+            player.rejoin = hash;
+            break;
+          }
+        }
+        if (!privateCode) return {error:'Could not issue a rejoin code. Try again.'};
+      }
+      player.credential = credential;
       await tx.put(key,room);
-      return null;
+      return {privateCode};
     });
-    return result ? error(result,403) : new Response(JSON.stringify({code,secret}),{headers:{...headers,'content-type':'application/json','set-cookie':'seasons_guest='+secret+'; Path=/api/seasons/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400'}});
+    return result.error ? error(result.error,403) : new Response(JSON.stringify({code,secret,rejoin:result.privateCode}),{
+      headers:{...headers,'content-type':'application/json','set-cookie':'seasons_guest_'+code+'='+secret+'; Path=/api/seasons/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400'}
+    });
   }
+  const cookies = request.headers.get('cookie')||'';
   const credential = request.headers.get('x-room-credential') ||
-    (request.headers.get('cookie')||'').match(/(?:^|; )seasons_guest=([a-f0-9]{64})(?:;|$)/)?.[1] || '';
+    cookies.match(new RegExp('(?:^|; )seasons_guest_'+code+'=([a-f0-9]{64})(?:;|$)'))?.[1] ||
+    cookies.match(/(?:^|; )seasons_guest=([a-f0-9]{64})(?:;|$)/)?.[1] || '';
   const guestHash = /^[a-f0-9]{64}$/.test(credential) ? await digest(credential) : null;
   const identify = room=>({
     host:!!grant && session.userId===room.host,
