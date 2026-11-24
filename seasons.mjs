@@ -21,10 +21,19 @@ const documentSlots = ['start','audit','journals','solution','host-guide',...fil
 const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html|png)$/;
 const isOpen = room => room && room.expires > Date.now();
 const canReadFile = (room, guest, file) => !!guest && guest.files.includes(file) && room.phase !== 'briefing';
+function journalEntry(data){
+  if (!Array.isArray(data.answers) || data.answers.length!==4 ||
+      data.answers.some(a=>typeof a!=='string'||a.length>4000)) return null;
+  const references=data.references??[[],[],[],[]];
+  if (!Array.isArray(references)||references.length!==4||
+      references.some(list=>!Array.isArray(list)||list.length>10||new Set(list).size!==list.length||
+        list.some(page=>!Number.isInteger(page)||page<1||page>10))) return null;
+  return {answers:data.answers,references,complete:data.complete===true&&data.answers.every(a=>a.trim())};
+}
 const publicRoom = (room, guest, host) => ({
   phase:room.phase, code:room.code, edition:room.edition||null, audioV07:!!room.audioV07, briefing:room.briefing, audit:room.audit,
   outcome:room.outcome, reveal:room.reveal, reaction:room.reaction, expires:room.expires,
-  ...(host ? {players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
+  ...(host ? {terminalImages:room.edition==='terminal-v02'?[...terminalImages]:[],journalPrompts:Object.fromEntries(fileNumbers.map(file=>[file,journals[file-1][2]])),players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
     : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),images:room.phase==='briefing'?[]:[...terminalImages].filter(name=>guest.files.includes(Number(name.slice(9,11)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
 });
 
@@ -147,17 +156,44 @@ async function route({db,env,session:readSession,limited},request) {
     await db.put('seasons:host:'+data.member,{episode,expires});
     return json({expires});
   }
-  if (action === 'product' && !post) {
+  if (action === 'product') {
     if (!await seasonsProductAccess(db,session)) return error('Active Episode 1 product access required.',403);
-    const {briefing, transcript, credit} = await import('./seasons-content.mjs');
-    const clips = briefing.filter(clip=>clip.review_after_briefing);
-    const name = url.searchParams.get('name');
-    if (!name) return json({clips,transcript,credit});
-    const playerFiles = ['start.pdf','journals.pdf',...fileNumbers.map(n=>'case-'+n+'.pdf'),transcript,credit];
-    if (!playerFiles.includes(name) && !clips.some(clip=>clip.filename===name)) {
-      return error('This material is restricted.',403);
+    const {briefingForEdition,credit} = await import('./seasons-content.mjs');
+    const terminal=await db.get('seasons:active-edition')==='terminal-v02';
+    const audioV07=terminal&&!!bucket&&(await Promise.all(v07Files.map(name=>bucket.head(terminalKey(name))))).every(Boolean);
+    const {clips,transcript}=briefingForEdition(terminal,audioV07);
+    const progressKey='seasons:solo:'+session.userId;
+    const state = progress=>({
+      clips,transcript,credit,terminal,shown:!!progress.shown,
+      audit:fileNumbers.every(file=>progress.journals[file]?.complete),
+      player:{files:fileNumbers,journals:progress.journals,images:terminal?[...terminalImages]:[],
+        prompts:Object.fromEntries(fileNumbers.map(file=>[file,journals[file-1][2]]))}
+    });
+    if(post){
+      const data=await request.json();
+      return db.transaction(async tx=>{
+        const progress=await tx.get(progressKey)||{journals:{}};
+        if(data.type==='briefing-shown')progress.shown=true;
+        else if(data.type==='journal'&&progress.shown&&fileNumbers.includes(data.file)){
+          const entry=journalEntry(data);
+          if(!entry)return error('Send four journal responses and valid evidence references.');
+          progress.journals[data.file]=entry;
+        }else return error('This action is unavailable.',403);
+        await tx.put(progressKey,progress);
+        return json(state(progress));
+      });
     }
-    return bucket ? fileResponse(bucket,episode+'/'+name,request) : error('Private media storage is not configured.',503);
+    const progress=await db.get(progressKey)||{journals:{}};
+    const name=url.searchParams.get('name');
+    if(!name)return json(state(progress));
+    const clip=clips.find(clip=>clip.filename===name);
+    const allowed=['start.pdf','journals.pdf',...fileNumbers.map(n=>'case-'+n+'.pdf'),transcript,credit];
+    if(name==='audit.pdf'&&fileNumbers.every(file=>progress.journals[file]?.complete))allowed.push(name);
+    if(!clip&&(!progress.shown||(!allowed.includes(name)&&!(terminal&&terminalImages.has(name)))))
+      return error('This material is restricted.',403);
+    const key=terminal&&(terminalPdfs.test(name)||terminalImages.has(name)||isTerminalBriefingAsset(name))
+      ?terminalKey(name):(clip?.scope==='shared'?'shared':episode)+'/'+name;
+    return bucket?fileResponse(bucket,key,request):error('Private media storage is not configured.',503);
   }
   if (action === 'redeem' && post) {
     if (await limited(request,'seasons-redeem')) return error('Too many attempts. Try again later.',429);
@@ -256,6 +292,13 @@ async function route({db,env,session:readSession,limited},request) {
     if (!isOpen(room)) return error('Room not available.',404);
     const {host,guest} = identify(room);
     if (!host&&!guest) return error('Join this room first.',403);
+    if(action==='submitted-journals'){
+      if(!host)return error('Only the host can review submissions.',403);
+      return json(room.players.flatMap(player=>Object.entries(player.journals)
+        .filter(([,entry])=>entry.complete).map(([file,entry])=>({
+          playerId:player.id,name:player.name,file:Number(file),answers:entry.answers,references:entry.references??[]
+        }))));
+    }
     if (action==='state') return json(publicRoom(room,guest,host));
     if (action!=='asset') return error('Unknown room action.',404);
     const name = url.searchParams.get('name')||'';
@@ -302,9 +345,9 @@ async function route({db,env,session:readSession,limited},request) {
     const {host,guest} = identify(room);
     if (data.type==='journal') {
       if (!canReadFile(room,guest,data.file) || room.phase==='closed') return error('This journal is unavailable.',403);
-      if (!Array.isArray(data.answers) || data.answers.length!==4 || data.answers.some(a=>typeof a!=='string'||a.length>4000)) return error('Send four journal responses.');
-      const complete = data.complete===true && data.answers.every(a=>a.trim());
-      guest.journals[data.file]={answers:data.answers,complete:!!complete};
+      const entry=journalEntry(data);
+      if(!entry)return error('Send four journal responses and valid evidence references.');
+      guest.journals[data.file]=entry;
     } else {
       if (!host) return error('Only the host can do that.',403);
       const covered = fileNumbers.every(n=>room.players.some(p=>p.files.includes(n)));

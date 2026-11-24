@@ -77,6 +77,15 @@ body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host
 .host-session button{background:#152c39;border-color:#8fa2ac}
 .host-stage button{background:#e8d2a0;color:#172831;border-color:#e8d2a0;font-weight:700}
 .host-session a{color:#f1d79c}
+#journal-review{width:min(95%,60rem);max-height:90dvh;background:#f8efdc;color:#1b3039;border:4px double #b79a68}
+#journal-review::backdrop{background:#080b10bb}
+#journal-review article{background:#fff9ec}
+#journal-review h3{color:#183c65}
+#journal-review p{white-space:pre-wrap}
+.journal-references{display:flex;flex-wrap:wrap;align-items:center;gap:.45rem;margin:.3rem 0 .85rem}
+.journal-references select{max-width:100%;min-height:40px}
+.journal-references button{margin:0}
+#pdf-journals-back{order:-1}
 </style>
 </head>
 <body>
@@ -103,11 +112,17 @@ body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host
       <button id="pdf-next" type="button" disabled>Next</button>
       <button id="pdf-zoom" type="button" aria-pressed="false" disabled>Zoom in</button>
       <button id="pdf-image" type="button" hidden>View exhibit image</button>
+      <button id="pdf-journals-back" type="button" hidden>Back to all journals</button>
       <button id="pdf-close" type="button" autofocus>Close</button>
       <span id="pdf-status" role="status"></span>
     </div>
     <div id="pdf-pages"><div class="pdf-sheet"><canvas hidden></canvas><div class="textLayer"></div></div><img hidden alt=""></div>
   </div>
+</dialog>
+<dialog id="journal-review" aria-labelledby="journal-review-title">
+  <h2 id="journal-review-title">Submitted investigation journals</h2>
+  <button type="button" id="journal-review-close">Close journals</button>
+  <div id="journal-submissions"></div>
 </dialog>
 <script type="module">
 import {briefingForEdition, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
@@ -145,7 +160,7 @@ async function readAsset(name,signal) {
 }
 const pdfView=$('pdf-view');
 let pdfLibrary;
-async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage}={}){
+async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage,fromJournals=false}={}){
   const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
   const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
   const image=pages.querySelector('img'), imageButton=$('pdf-image'), layer=pages.querySelector('.textLayer');
@@ -155,6 +170,8 @@ async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imag
   sheet.hidden=false;image.hidden=true;layer.replaceChildren();
   imageButton.hidden=true;imageButton.textContent='View exhibit image';
   let loading, documentPdf, rendering, pageNumber=startPage, enlarged=false;
+  $('pdf-journals-back').hidden=!fromJournals;
+  $('pdf-journals-back').onclick=()=>pdfView.close();
   $('pdf-title').textContent=title;
   status.textContent='Loading document…';
   canvas.hidden=true;
@@ -269,7 +286,7 @@ async function refresh(){
 }
 const briefingView=$('briefing-view');
 briefingView.addEventListener('cancel',event=>event.preventDefault());
-async function playBriefing(){
+async function playBriefing({solo=false,onFinish}={}){
   if(briefingView.open)return;
   const video=briefingView.querySelector('video');
   const frame=briefingView.querySelector('canvas');
@@ -290,11 +307,13 @@ async function playBriefing(){
   };
   const finish=async()=>{
     try{
-      await update('briefing-shown');
+      if(solo){if(document.fullscreenElement===briefingView)await document.exitFullscreen();}
+      else await update('briefing-shown');
       video.removeAttribute('src');video.load();
       if(source)URL.revokeObjectURL(source);
       frame.hidden=true;
       pending.clear();
+      if(solo)await onFinish();
       briefingView.close();
     }catch(error){waitForHost('Return to host management',error.message,finish);}
   };
@@ -333,12 +352,13 @@ async function playBriefing(){
   const begin=async()=>{
     message.textContent='Loading briefing…';
     try{
-      if(!started){await update('briefing');started=true;}
+      if(!started){if(!solo)await update('briefing');started=true;}
       prefetch(0);
       prefetch(1);
       await startClip();
     }catch(error){waitForHost('Retry briefing',error.message,begin);}
   };
+  if(solo&&briefingView.requestFullscreen)briefingView.requestFullscreen().catch(()=>{});
   briefingView.showModal();
   await begin();
 }
@@ -376,6 +396,36 @@ function render(next){
   const files=JSON.stringify([state.player?.files,state.phase,state.audit]);
   if(files!==lastFiles && state.player){lastFiles=files;renderWorkspace(state.player);}
 }
+const evidenceImageName=(file,page)=>'evidence-'+String(file).padStart(2,'0')+'-'+String(page).padStart(2,'0')+'.png';
+const journalReview=$('journal-review');
+$('journal-review-close').onclick=()=>journalReview.close();
+async function reviewJournals(){
+  const entries=await api('submitted-journals');
+  const area=$('journal-submissions');area.replaceChildren();
+  if(!entries.length)area.append(make('p','No journals have been submitted yet.'));
+  for(const entry of entries){
+    const card=make('article');
+    const [,title]=caseTitles[entry.file-1];
+    card.append(make('h3',entry.name+' · Case File '+entry.file+' · '+title));
+    const list=make('ol');
+    const prompts=state.journalPrompts?.[entry.file]??[];
+    entry.answers.forEach((answer,index)=>{
+      const item=make('li');if(prompts[index])item.append(make('strong',prompts[index]));
+      item.append(make('p',answer));
+      const refs=make('div');refs.className='journal-references';
+      (entry.references[index]??[]).forEach((page,refIndex)=>{
+        const trigger=button('Reference '+(refIndex+1)+' · Evidence '+String(page).padStart(2,'0'),()=>
+          viewPdf(title+' · Evidence '+String(page).padStart(2,'0'),'case-'+entry.file+'.pdf',
+            {firstPage:page,lastPage:page,fromJournals:true,
+              imageForPage:()=>state.terminalImages?.includes(evidenceImageName(entry.file,page))?evidenceImageName(entry.file,page):undefined}));
+        refs.append(trigger);
+      });
+      item.append(refs);list.append(item);
+    });
+    card.append(list);area.append(card);
+  }
+  journalReview.showModal();
+}
 function renderControls(){
   const controls=$('controls'), referenceOpen=controls.querySelector('.briefing-menu')?.open, mediaOpen=controls.querySelector('.briefing-menu details')?.open, documentsOpen=controls.querySelector('.host-documents')?.open;controls.replaceChildren();
   if(isHost && state.players){
@@ -395,6 +445,7 @@ function renderControls(){
       group.append(assignment);cards.append(group);
     }
     const actions=make('div');actions.className='actions';
+    actions.append(button('View submitted journals',reviewJournals));
     if(state.briefing==='ready')actions.append(button('Start briefing',playBriefing));
     if(state.briefing==='playing')actions.append(button('Mark briefing shown',()=>update('briefing-shown')));
     if(state.phase==='briefing'&&state.briefing==='shown'){
@@ -504,7 +555,7 @@ function renderWorkspace(player){
       if(!page)return;
       evidence.value='';
       await viewPdf(title,'case-'+file+'.pdf',{startPage:page,lastPage:10,imageForPage:number=>{
-        const name='evidence-'+String(file).padStart(2,'0')+'-'+String(number).padStart(2,'0')+'.png';
+        const name=evidenceImageName(file,number);
         return terminalEdition&&player.images?.includes(name)?name:undefined;
       }});
 
@@ -512,22 +563,50 @@ function renderWorkspace(player){
     evidencePicker=evidenceLabel;selectors.append(evidencePicker);
     pane.append(make('h3',title));
     const draftKey='journal:'+room+':'+secret+':'+file;
-    const initial=JSON.parse(sessionStorage.getItem(draftKey)||'null')||state.player.journals[file]?.answers||[];
+    const saved=state.player.journals[file];
+    const draft=isProduct?null:JSON.parse(sessionStorage.getItem(draftKey)||'null');
+    const initial=Array.isArray(draft)?draft:draft?.answers??saved?.answers??[];
+    const references=Array.from({length:4},(_,index)=>[...(draft?.references?.[index]??saved?.references?.[index]??[])]);
     if(terminalEdition)journal.append(make('strong','MAVEN POLICE DEPARTMENT'));
     journal.append(make('h3','Investigation Journal '+file),make('p','Answer each prompt or explain what the evidence does not establish.'));
     const fields=prompts.map((prompt,index)=>{
-      const label=make('label',prompt),input=make('textarea');input.maxLength=4000;input.value=initial[index]||'';input.disabled=state.phase==='closed';label.append(input);journal.append(label);return input;
+      const label=make('label',prompt),input=make('textarea');input.maxLength=4000;input.value=initial[index]||'';input.disabled=state.phase==='closed';label.append(input);journal.append(label);
+      const refs=make('div');refs.className='journal-references';journal.append(refs);
+      function paintReferences(){
+        refs.replaceChildren();
+        for(const page of references[index]){
+          const remove=button('Remove Evidence '+String(page).padStart(2,'0'),()=>{
+            references[index]=references[index].filter(current=>current!==page);
+            stash();paintReferences();
+          });
+          remove.disabled=state.phase==='closed';refs.append(remove);
+        }
+        if(state.phase==='closed'||references[index].length===10)return;
+        const select=make('select');
+        const placeholder=make('option',references[index].length?'Select another related evidence item':'Select evidence as reference');
+        placeholder.value='';select.append(placeholder);select.setAttribute('aria-label',placeholder.textContent);
+        for(let page=1;page<=10;page++)if(!references[index].includes(page)){
+          const option=make('option','Evidence '+String(page).padStart(2,'0'));option.value=page;select.append(option);
+        }
+        select.onchange=()=>{if(!select.value)return;references[index].push(Number(select.value));stash();paintReferences();refs.querySelector('select')?.focus();};
+        refs.append(select);
+      }
+      paintReferences();
+      return input;
     });
-    const values=()=>fields.map(f=>f.value);
+    const values=()=>({answers:fields.map(f=>f.value),references:references.map(list=>[...list])});
+    const stash=()=>{if(!isProduct)sessionStorage.setItem(draftKey,JSON.stringify(values()));};
     const save=async complete=>{
       const submitted=values();
-      if(complete&&submitted.some(a=>!a.trim()))throw Error('Answer all four required prompts.');
-      await update('journal',{file,answers:submitted,complete});
+      if(complete&&submitted.answers.some(a=>!a.trim()))throw Error('Answer all four required prompts.');
+      const change={type:'journal',file,...submitted,complete};
+      if(isProduct)renderSolo(await api('product',change));
+      else await update('journal',{file,...submitted,complete});
       if(JSON.stringify(values())===JSON.stringify(submitted))sessionStorage.removeItem(draftKey);
-      report(complete?'Journal marked complete.':'Draft saved.');
+      report(complete?'Journal submitted.':'Draft saved.');
     };
-    for(const input of fields)input.oninput=()=>sessionStorage.setItem(draftKey,JSON.stringify(values()));
-    if(state.phase!=='closed')journal.append(button('Save draft',()=>save(false)),button('Mark complete',()=>save(true)));
+    for(const input of fields)input.oninput=stash;
+    if(state.phase!=='closed')journal.append(button('Save draft',()=>save(false)),button('Submit journal',()=>save(true)));
 
   }
   const emptyOption=make('option','Select a case file');emptyOption.value='';select.append(emptyOption);
@@ -539,15 +618,29 @@ function renderWorkspace(player){
   select.onchange=()=>openFile(Number(select.value));
   openFile(player.files.includes(activeFile)?activeFile:player.files.length===1?player.files[0]:0);
 }
+function renderSolo(materials){
+  const entry=$('entry'), session=$('session');
+  terminalEdition=materials.terminal;
+  briefing=materials.clips;transcript=materials.transcript;
+  const replay=()=>playBriefing({solo:true,onFinish:async()=>{
+    if(!materials.shown)renderSolo(await api('product',{type:'briefing-shown'}));
+  }});
+  entry.replaceChildren();
+  if(!materials.shown){
+    entry.append(button('Play briefing and begin investigation',replay));
+    return;
+  }
+  entry.hidden=true;session.hidden=false;session.classList.add('player-session');
+  $('room-heading').textContent='Solo investigation';
+  $('phase').textContent='';
+  const menu=make('details');menu.append(make('summary','Briefing'),
+    button('Replay full briefing',replay),showText('Read Briefing Transcript',transcript),showText('Music credits',materials.credit));
+  $('controls').replaceChildren(menu);
+  state={player:materials.player,phase:'investigation',audit:materials.audit};
+  renderWorkspace(state.player);
+}
 if(isProduct){
-  safely(async()=>{
-    const materials=await api('product');
-    const entry=$('entry');
-    entry.append(make('h2','Episode materials'),link('Start Here','start.pdf'),link('Investigation Journals','journals.pdf'));
-    for(let i=1;i<=6;i++)entry.append(link('Case File '+i,'case-'+i+'.pdf'));
-    entry.append(showText('Briefing transcript',materials.transcript),showText('Music credit',materials.credit));
-    for(const clip of materials.clips)entry.append(link(clip.label,clip.filename));
-  })();
+  safely(async()=>renderSolo(await api('product')))();
 }else if(isHost){
   $('entry').append(button('Begin Hosting a Live Session',async()=>{const result=await api('create',{},terminalEdition?{edition:'terminal-v02'}:{});setRoom(result.code);}));
 }else{
