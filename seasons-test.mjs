@@ -1,3 +1,4 @@
+import {yearFromNow} from './seasons.mjs';
 import assert from 'node:assert/strict';
 import {CaseVault} from './worker.mjs';
 import {briefing,briefingForEdition,reactionFiles,transcript} from './seasons-content.mjs';
@@ -69,6 +70,19 @@ const accountDetails = async id=>(await call('/api/admin/account?id='+id,{cookie
 const assign = (id,revision,changes,cookie=admin)=>call('/api/admin/account/access',{
   cookie,body:{userId:id,accessRevision:revision,changes}
 });
+const bothMember='c'.repeat(48);
+const bothSession=await member(bothMember,'c');
+const bothDetail=await accountDetails(bothMember);
+const bothKeys=['seasons:host','seasons:product'];
+assert.equal((await assign(bothMember,bothDetail.accessRevision,bothKeys.map(key=>({key,enabled:true})))).status,200);
+const bothGrants=(await accountDetails(bothMember)).products.filter(p=>bothKeys.includes(p.key));
+assert.equal(bothGrants.length,2);
+for(const grant of bothGrants){
+  assert.equal(grant.enabled,true);
+  assert.ok(Math.abs(grant.expires-yearFromNow())<60000);
+}
+const bothDashboard=await (await call('/api/account/me',{cookie:bothSession})).json();
+assert.ok(bothDashboard.items.some(item=>item.host&&item.solo));
 const detail = await accountDetails(first);
 assert.equal(detail.products.find(p=>p.key==='seasons:host').enabled,true);
 assert.equal(detail.products.find(p=>p.key==='seasons:product').enabled,false);
