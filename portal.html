@@ -67,6 +67,15 @@ body.admin-session main>#logout{display:none}body.admin-session #message:empty{d
 <p id="seasons-feedback" role="status"></p>
 </div>
 <div class="box">
+<h3>The Last Loan · Terminal V02</h3>
+<form id="terminal-upload">
+<label>Versioned release files <input type="file" name="files" multiple required accept=".pdf,.png,.mp4,.txt"></label>
+<button type="submit">Upload release files</button>
+</form>
+<button type="button" id="terminal-activate">Activate for new hosted rooms</button>
+<p id="terminal-status" role="status"></p>
+</div>
+<div class="box">
 <h3>Episode 1 host access</h3>
 <p><a href="#accounts">Grant or revoke access from a member’s account.</a> Confirmation codes grant one year of host access from redemption.</p>
 <button id="seasons-code" type="button">Generate host confirmation code</button>
@@ -110,6 +119,28 @@ function selectCase(id){$('#case-id').value=id;$('#upload-case').value=id;}
 function go(path){if(location.hash==='#'+path)renderAdminRoute();else location.hash=path;}
 function breadcrumb(items){const area=$('#admin-breadcrumb');area.replaceChildren();items.forEach((item,i)=>{if(i)area.append(node('span','›'));const el=node(item[1]?'a':'span',item[0]);if(item[1])el.href='#'+item[1];area.append(el);});}
 const seasonsArchetypes=['High-Value Theft','Silent Witness','Sabotage','Poisoning','Wrong Target','Whodunit','False Alibi','Disappearance','Inside Job','Smuggling','Hoax','Forgery','Frame-Up','Blackmail','Ransom','Cover-Up','Impersonation','Con / Swindle','Double-Cross','Locked Room'];
+const terminalUpload=$('#terminal-upload'), terminalStatus=$('#terminal-status');
+terminalUpload.onsubmit=async event=>{
+ event.preventDefault();
+ const submit=terminalUpload.querySelector('button');
+ const files=[...terminalUpload.elements.files.files];
+ submit.disabled=true;
+ let uploaded=0;
+ try{
+  for(const file of files){
+   const query=new URLSearchParams({group:'terminal-v02',slot:'S0001_E01',name:file.name});
+   const response=await fetch('/api/seasons/admin/asset?'+query,{method:'POST',body:file});
+   const result=await response.json();
+   if(!response.ok)throw Error(file.name+' · '+result.error);
+   terminalStatus.textContent='Uploaded '+(++uploaded)+' of '+files.length+' release files.';
+  }
+ }catch(error){terminalStatus.textContent='Uploaded '+uploaded+' of '+files.length+'. '+error.message;}
+ finally{submit.disabled=false;}
+};
+$('#terminal-activate').onclick=async()=>{
+ try{await api('seasons/admin/terminal-release',{});terminalStatus.textContent='Terminal V02 is active for new hosted rooms.';}
+ catch(error){terminalStatus.textContent=error.message;}
+};
 function renderSeasonsUploads(){
  const group=$('#seasons-group').value, root=$('#seasons-slots'), feedback=$('#seasons-feedback');
  root.replaceChildren();feedback.textContent='';

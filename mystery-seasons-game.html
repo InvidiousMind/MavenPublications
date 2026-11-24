@@ -100,8 +100,8 @@ const $ = id=>document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const isHost = params.get('host')==='1';
 const isProduct = params.get('product')==='1';
-const terminalEdition = !isProduct && params.get('edition')==='terminal-v02';
-const {clips:briefing,transcript}=briefingForEdition(terminalEdition);
+let terminalEdition = !isProduct && params.get('edition')==='terminal-v02';
+let {clips:briefing,transcript}=briefingForEdition(terminalEdition);
 let room = params.get('room')||'', secret = '', privateCode = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
 let state, refreshing=false;
 const make = (tag,text) => {const e=document.createElement(tag);if(text)e.textContent=text;return e;};
@@ -113,9 +113,9 @@ function button(text,run) {
   return e;
 }
 const endpoint = (action, extra={})=>'/api/seasons/'+action+'?'+new URLSearchParams({room,...extra});
-const asset = name=>endpoint(isProduct?'product':'asset',{name,...(terminalEdition?{edition:'terminal-v02'}:{})});
-async function api(action, payload) {
-  const response=await fetch(endpoint(action),{method:payload?'POST':'GET',headers:{...(payload?{'content-type':'application/json'}:{}),...(secret?{'x-room-credential':secret}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
+const asset = name=>endpoint(isProduct?'product':'asset',{name});
+async function api(action, payload, extra={}) {
+  const response=await fetch(endpoint(action,extra),{method:payload?'POST':'GET',headers:{...(payload?{'content-type':'application/json'}:{}),...(secret?{'x-room-credential':secret}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
   const result=await response.json();
   if(!response.ok) throw Error(result.error||'Request failed.');
   return result;
@@ -340,6 +340,8 @@ function play(clips,title,finished){
 }
 function render(next){
   state=next;
+  terminalEdition=state.edition==='terminal-v02';
+  ({clips:briefing,transcript}=briefingForEdition(terminalEdition));
   $('entry').hidden=true;$('session').hidden=false;
   $('session').classList.toggle('player-session',!!state.player);
   $('room-heading').textContent='Room '+room;
@@ -520,7 +522,7 @@ if(isProduct){
     for(const clip of materials.clips)entry.append(link(clip.label,clip.filename));
   })();
 }else if(isHost){
-  $('entry').append(button('Begin Hosting a Live Session',async()=>{const result=await api('create',{});setRoom(result.code);}));
+  $('entry').append(button('Begin Hosting a Live Session',async()=>{const result=await api('create',{},terminalEdition?{edition:'terminal-v02'}:{});setRoom(result.code);}));
 }else{
   const form=make('form');
   const field=(title,value='')=>{const label=make('label',title),input=make('input');input.value=value;label.append(input);form.append(label);return input;};

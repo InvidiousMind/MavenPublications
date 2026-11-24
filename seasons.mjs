@@ -21,7 +21,7 @@ const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html|png)$/;
 const isOpen = room => room && room.expires > Date.now();
 const canReadFile = (room, guest, file) => !!guest && guest.files.includes(file) && room.phase !== 'briefing';
 const publicRoom = (room, guest, host) => ({
-  phase:room.phase, code:room.code, briefing:room.briefing, audit:room.audit,
+  phase:room.phase, code:room.code, edition:room.edition||null, briefing:room.briefing, audit:room.audit,
   outcome:room.outcome, reveal:room.reveal, reaction:room.reaction, expires:room.expires,
   ...(host ? {players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
     : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),images:room.phase==='briefing'?[]:[...terminalImages].filter(name=>guest.files.includes(Number(name.slice(9,11)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
@@ -111,6 +111,23 @@ async function route({db,env,session:readSession,limited},request) {
       await bucket.put(key,bytes,{httpMetadata:{contentType:types[key.split('.').pop()]}});
       return json({ok:true});
     }
+    if (action==='admin/terminal-release' && post) {
+      if (!bucket) return error('Private media storage is not configured.',503);
+      const {clips,transcript}= (await import('./seasons-content.mjs')).briefingForEdition(true);
+      const keys=[
+        ...['start.pdf','audit.pdf','journals.pdf',...fileNumbers.map(n=>'case-'+n+'.pdf'),...terminalImages,transcript].map(terminalKey),
+        ...clips.map(clip=>terminalBriefingAsset.test(clip.filename)?terminalKey(clip.filename):(clip.scope==='shared'?'shared':episode)+'/'+clip.filename)
+      ];
+      const missing=[];
+      for(let i=0;i<keys.length;i+=6){
+        const batch=keys.slice(i,i+6);
+        const objects=await Promise.all(batch.map(key=>bucket.head(key)));
+        missing.push(...batch.filter((_,index)=>!objects[index]));
+      }
+      if(missing.length)return error('Missing release files: '+missing.map(key=>key.split('/').pop()).join(', '),409);
+      await db.put('seasons:active-edition','terminal-v02');
+      return json({ok:true});
+    }
     if (!post || !['admin/grant','admin/code'].includes(action)) return error('Unknown admin action.',404);
     const data = await request.json();
     if (action === 'admin/code') {
@@ -160,9 +177,10 @@ async function route({db,env,session:readSession,limited},request) {
   const grant = await seasonsHostAccess(db,session);
   if (action === 'create' && post) {
     if (!grant) return error('Active Episode 1 host access required.',403);
+    const edition=url.searchParams.get('edition')==='terminal-v02'?'terminal-v02':await db.get('seasons:active-edition');
     for (let attempt=0;attempt<8;attempt++) {
       const code = roomCode();
-      const room = {code,host:session.userId,expires:Date.now()+roomLifetime,phase:'briefing',briefing:'ready',audit:false,reveal:false,players:[]};
+      const room = {code,edition:edition||null,host:session.userId,expires:Date.now()+roomLifetime,phase:'briefing',briefing:'ready',audit:false,reveal:false,players:[]};
       const created = await db.transaction(async tx=>{
         if (isOpen(await tx.get('seasons:room:'+code))) return false;
         await tx.put('seasons:room:'+code,room);
@@ -236,7 +254,7 @@ async function route({db,env,session:readSession,limited},request) {
     if (action==='state') return json(publicRoom(room,guest,host));
     if (action!=='asset') return error('Unknown room action.',404);
     const name = url.searchParams.get('name')||'';
-    const terminal = url.searchParams.get('edition')==='terminal-v02';
+    const terminal = room.edition==='terminal-v02';
     let objectKey;
     if (terminal && terminalImages.has(name)) {
       if (!host && !canReadFile(room,guest,Number(name.slice(9,11)))) return error('This material is restricted.',403);
