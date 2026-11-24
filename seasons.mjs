@@ -1,3 +1,4 @@
+import {v07Files} from './seasons-content.mjs';
 import { journals } from './seasons-journals.mjs';
 const episode = 'S0001_E01';
 export function yearFromNow() {
@@ -21,7 +22,7 @@ const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html|png)$/;
 const isOpen = room => room && room.expires > Date.now();
 const canReadFile = (room, guest, file) => !!guest && guest.files.includes(file) && room.phase !== 'briefing';
 const publicRoom = (room, guest, host) => ({
-  phase:room.phase, code:room.code, edition:room.edition||null, briefing:room.briefing, audit:room.audit,
+  phase:room.phase, code:room.code, edition:room.edition||null, audioV07:!!room.audioV07, briefing:room.briefing, audit:room.audit,
   outcome:room.outcome, reveal:room.reveal, reaction:room.reaction, expires:room.expires,
   ...(host ? {players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
     : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),images:room.phase==='briefing'?[]:[...terminalImages].filter(name=>guest.files.includes(Number(name.slice(9,11)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
@@ -47,10 +48,11 @@ function roomCode() {
 const terminalPdfs = /^(?:case-[1-6]|start|journals|audit)\.pdf$/;
 const terminalImages = new Set('01-02 01-04 01-05 01-09 02-02 02-03 02-04 02-05 02-06 02-09 03-02 03-03 03-08 04-03 05-02 05-03 05-04 05-06 05-10 06-02 06-04'.split(' ').map(id=>'evidence-'+id+'.png'));
 const terminalKey = name=>episode+'/terminal-v02/'+name;
-const terminalBriefingAsset = /^(?:MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_(?:(?:CASE_INTRO|BM_03_PUBLIC_LISTING)_CC_V06\.mp4|Final_Transcript_V06\.txt))$/;
+const v06Asset = /^(?:MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_(?:(?:CASE_INTRO|BM_03_PUBLIC_LISTING)_CC_V06\.mp4|Final_Transcript_V06\.txt))$/;
+const isTerminalBriefingAsset = name=>v06Asset.test(name)||v07Files.includes(name);
 function storageKey(group, name, slot) {
   if (!assetPattern.test(name)) return null;
-  if (group === 'terminal-v02' && slot === episode && (terminalPdfs.test(name) || terminalImages.has(name) || terminalBriefingAsset.test(name))) return terminalKey(name);
+  if (group === 'terminal-v02' && slot === episode && (terminalPdfs.test(name) || terminalImages.has(name) || isTerminalBriefingAsset(name))) return terminalKey(name);
   if (group === 'shared' && /\.(mp4|txt|json)$/.test(name)) return 'shared/'+name;
   if (group === 'episode' && /^S\d{4}_E\d{2}$|^special-[a-z0-9-]+$/.test(slot)) return slot+'/'+name;
   return null;
@@ -116,7 +118,7 @@ async function route({db,env,session:readSession,limited},request) {
       const {clips,transcript}= (await import('./seasons-content.mjs')).briefingForEdition(true);
       const keys=[
         ...['start.pdf','audit.pdf','journals.pdf',...fileNumbers.map(n=>'case-'+n+'.pdf'),...terminalImages,transcript].map(terminalKey),
-        ...clips.map(clip=>terminalBriefingAsset.test(clip.filename)?terminalKey(clip.filename):(clip.scope==='shared'?'shared':episode)+'/'+clip.filename)
+        ...clips.map(clip=>isTerminalBriefingAsset(clip.filename)?terminalKey(clip.filename):(clip.scope==='shared'?'shared':episode)+'/'+clip.filename)
       ];
       const missing=[];
       for(let i=0;i<keys.length;i+=6){
@@ -178,9 +180,11 @@ async function route({db,env,session:readSession,limited},request) {
   if (action === 'create' && post) {
     if (!grant) return error('Active Episode 1 host access required.',403);
     const edition=url.searchParams.get('edition')==='terminal-v02'?'terminal-v02':await db.get('seasons:active-edition');
+    const audioV07=edition==='terminal-v02' && !!bucket &&
+      (await Promise.all(v07Files.map(name=>bucket.head(terminalKey(name))))).every(Boolean);
     for (let attempt=0;attempt<8;attempt++) {
       const code = roomCode();
-      const room = {code,edition:edition||null,host:session.userId,expires:Date.now()+roomLifetime,phase:'briefing',briefing:'ready',audit:false,reveal:false,players:[]};
+      const room = {code,edition:edition||null,audioV07,host:session.userId,expires:Date.now()+roomLifetime,phase:'briefing',briefing:'ready',audit:false,reveal:false,players:[]};
       const created = await db.transaction(async tx=>{
         if (isOpen(await tx.get('seasons:room:'+code))) return false;
         await tx.put('seasons:room:'+code,room);
@@ -238,12 +242,13 @@ async function route({db,env,session:readSession,limited},request) {
     });
   }
   const cookies = request.headers.get('cookie')||'';
-  const credential = request.headers.get('x-room-credential') ||
+  const explicitGuest = request.headers.get('x-room-credential');
+  const credential = explicitGuest ||
     cookies.match(new RegExp('(?:^|; )seasons_guest_'+code+'=([a-f0-9]{64})(?:;|$)'))?.[1] ||
     cookies.match(/(?:^|; )seasons_guest=([a-f0-9]{64})(?:;|$)/)?.[1] || '';
   const guestHash = /^[a-f0-9]{64}$/.test(credential) ? await digest(credential) : null;
   const identify = room=>({
-    host:!!grant && session.userId===room.host,
+    host:!explicitGuest && !!grant && session.userId===room.host,
     guest:guestHash ? room.players.find(p=>p.credential===guestHash) : null
   });
   if (!post) {
@@ -272,13 +277,13 @@ async function route({db,env,session:readSession,limited},request) {
       const selected = assetPattern.test(name);
       if (!selected) return error('Media unavailable.',404);
       const {briefingForEdition,reactionFiles,credit} = await import('./seasons-content.mjs');
-      const {clips:briefing,transcript}=briefingForEdition(terminal);
+      const {clips:briefing,transcript}=briefingForEdition(terminal,room.audioV07);
       const clip = briefing.find(entry=>entry.filename===name);
       const reactionFile = reactionFiles[room.outcome];
       if (clip && (room.briefing==='playing' || (room.briefing==='shown' && clip.review_after_briefing))) {
-        objectKey = terminalBriefingAsset.test(name)?terminalKey(name):(clip.scope==='shared'?'shared':episode)+'/'+name;
+        objectKey = isTerminalBriefingAsset(name)?terminalKey(name):(clip.scope==='shared'?'shared':episode)+'/'+name;
       } else if ((name===transcript && room.briefing==='shown') || name===credit) {
-        objectKey = terminalBriefingAsset.test(name)?terminalKey(name):episode+'/'+name;
+        objectKey = isTerminalBriefingAsset(name)?terminalKey(name):episode+'/'+name;
       } else if (reactionFile && name===reactionFile+'.txt') {
         objectKey = 'shared/'+name;
       } else if (reactionFile && name===reactionFile+'.mp4' && room.reaction.active) {
