@@ -80,6 +80,15 @@ const expires = updated.products.find(p=>p.key==='seasons:product').expires;
 assert.equal(new Date(expires).getUTCFullYear(),new Date().getUTCFullYear()+1);
 const dashboard = await (await call('/api/account/me',{cookie:host})).json();
 assert.ok(dashboard.items.some(item=>item.destination==='/mystery-seasons-game?product=1'));
+assert.equal((await call(path('product',{name:'case-1.pdf'}),{cookie:host})).status,403);
+assert.equal((await call(path('product'),{cookie:host,body:{type:'briefing-shown'}})).status,200);
+assert.equal((await call(path('product',{name:'audit.pdf'}),{cookie:host})).status,403);
+for(let file=1;file<=6;file++){
+  const response=await call(path('product'),{cookie:host,body:{type:'journal',file,answers:['A','B','C','D'],references:[[1,2],[],[],[]],complete:true}});
+  assert.equal(response.status,200);
+  assert.equal((await response.json()).audit,file===6);
+}
+assert.equal((await call(path('product',{name:'audit.pdf'}),{cookie:host})).status,200);
 assert.equal((await call(path('product',{name:'case-1.pdf'}),{cookie:host})).status,200);
 assert.equal((await call(path('product',{name:'solution.pdf'}),{cookie:host})).status,403);
 assert.equal((await call(path('product',{name:'host-guide.pdf'}),{cookie:host})).status,403);
@@ -152,6 +161,15 @@ assert.equal((await play('audit.pdf',{guest})).status,403);
 const journal=(file,answers,complete)=>within('room',{guest,body:{type:'journal',file,answers,complete}});
 let state=await (await journal(1,['This is clear','Not established','My note','My question'],true)).json();
 assert.equal(state.player.journals[1].complete,true);
+const review=options=>within('submitted-journals',options);
+assert.equal((await review({guest})).status,403);
+const submission=await within('room',{guest,body:{type:'journal',file:1,answers:['A','B','C','D'],references:[[1,10],[],[],[]],complete:true}});
+assert.equal(submission.status,200);
+const [submitted]=await (await review({cookie:host})).json();
+assert.equal(submitted.name,'Guest One');
+assert.deepEqual(submitted.references[0],[1,10]);
+assert.equal((await within('room',{guest,body:{type:'journal',file:1,answers:['A','B','C','D'],references:[[11],[],[],[]],complete:true}})).status,400);
+
 state=await (await journal(1,['This is clear','','My note','My question'],true)).json();
 assert.equal(state.player.journals[1].complete,false);
 assert.equal((await command('assign',{player:backup,files:[6]})).status,200);
