@@ -7,6 +7,12 @@
 <title>The Last Loan | MAVEN Mystery Seasons</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.workspace iframe{width:100%;height:65vh;border:1px solid #b79a68}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere} @media(max-width:720px){.workspace{display:block}.workspace[data-tab="journal"] .evidence,.workspace[data-tab="evidence"] .journal{display:none}}@media(min-width:721px){.mobile-tabs{display:none}}
+#briefing-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#080b10;color:white;overflow:hidden}
+#briefing-view::backdrop{background:#080b10}
+#briefing-view video,#briefing-view canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:contain;background:#080b10;pointer-events:none}
+#briefing-message{position:absolute;inset:auto 1rem 1rem;text-align:center}
+#briefing-message p{width:fit-content;margin:.5rem auto;padding:.35rem .65rem;background:#080b10}
+#briefing-message p:empty{display:none}
 </style>
 </head>
 <body>
@@ -20,6 +26,11 @@
 <div id="controls"></div><div id="screen"></div><div id="workspace"></div>
 </div>
 </main>
+<dialog id="briefing-view" aria-label="The Last Loan briefing">
+  <video playsinline preload="auto" disablepictureinpicture disableremoteplayback></video>
+  <canvas hidden aria-hidden="true"></canvas>
+  <div id="briefing-message"><p role="status"></p><button type="button" hidden></button></div>
+</dialog>
 <script type="module">
 import {briefing, transcript, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
 const $ = id=>document.getElementById(id);
@@ -88,24 +99,94 @@ async function refresh(){
   refreshing=true;
   try{render(await api('state'));}catch(error){report(error.message);}finally{refreshing=false;}
 }
-function play(clips,title,finished,{briefingMode=false}={}){
+const briefingView=$('briefing-view');
+briefingView.addEventListener('cancel',event=>event.preventDefault());
+async function playBriefing(){
+  if(briefingView.open)return;
+  const video=briefingView.querySelector('video');
+  const frame=briefingView.querySelector('canvas');
+  const message=briefingView.querySelector('[role=status]');
+  const retry=briefingView.querySelector('button');
+  const clips=briefing.map(clip=>clip.filename), pending=new Map();
+  let index=0, source='', started=false;
+  const prefetch=position=>{
+    if(position>=clips.length||pending.has(position))return;
+    pending.set(position,readAsset(clips[position]).then(response=>response.blob())
+      .then(blob=>({blob}),error=>({error})));
+  };
+  const waitForHost=(label,description,action)=>{
+    message.textContent=description;
+    retry.textContent=label;
+    retry.hidden=false;
+    retry.onclick=()=>{retry.hidden=true;void action();};
+  };
+  const finish=async()=>{
+    try{
+      await update('briefing-shown');
+      video.removeAttribute('src');video.load();
+      if(source)URL.revokeObjectURL(source);
+      frame.hidden=true;
+      pending.clear();
+      briefingView.close();
+    }catch(error){waitForHost('Return to host management',error.message,finish);}
+  };
+  const startClip=async()=>{
+    message.textContent=index===0?'Loading briefing…':'';
+    prefetch(index);
+    const {blob,error}=await pending.get(index);
+    pending.delete(index);
+    if(error){waitForHost('Retry briefing clip',error.message,startClip);return;}
+    const previous=source;
+    source=URL.createObjectURL(blob);
+    video.src=source;
+    if(previous)URL.revokeObjectURL(previous);
+    prefetch(index+1);
+    prefetch(index+2);
+    await resume();
+  };
+  const resume=async()=>{
+    try{await video.play();}
+    catch(error){
+      if(!video.error)waitForHost('Resume briefing','Tap to continue playback.',resume);
+    }
+  };
+  video.onplaying=()=>{frame.hidden=true;message.textContent='';retry.hidden=true;};
+  video.onerror=()=>waitForHost('Retry briefing clip','This clip could not be played.',startClip);
+  video.onended=()=>{
+    if(video.videoWidth&&video.videoHeight){
+      frame.width=video.videoWidth;frame.height=video.videoHeight;
+      frame.getContext('2d').drawImage(video,0,0);
+      frame.hidden=false;
+    }
+    index++;
+    if(index<clips.length)void startClip();
+    else void finish();
+  };
+  const begin=async()=>{
+    message.textContent='Loading briefing…';
+    try{
+      if(!started){await update('briefing');started=true;}
+      prefetch(0);
+      prefetch(1);
+      await startClip();
+    }catch(error){waitForHost('Retry briefing',error.message,begin);}
+  };
+  briefingView.showModal();
+  await begin();
+}
+function play(clips,title,finished){
   const box=make('article'), video=make('video'), heading=make('h3',title);
   let index=0;
-  video.controls=!briefingMode;video.playsInline=true;video.preload='auto';
-  if(briefingMode){video.disablePictureInPicture=true;video.disableRemotePlayback=true;}
-  const resume=button('Resume briefing',async()=>{await video.play();resume.hidden=true;});
-  resume.hidden=true;
+  video.controls=true;video.playsInline=true;video.preload='auto';
   const fullscreen=button('Open full screen',async()=>{if(video.requestFullscreen)await video.requestFullscreen();else if(video.webkitEnterFullscreen)video.webkitEnterFullscreen();});
-  const start=()=>{video.src=asset(clips[index]);video.play().catch(()=>{if(briefingMode)resume.hidden=false;});};
+  const start=()=>{video.src=asset(clips[index]);video.play().catch(()=>{});};
   video.addEventListener('ended',safely(async()=>{
     index++;
     if(index<clips.length)start();
     else{video.hidden=true;await finished?.();}
   }));
   video.addEventListener('error',()=>report('Video unavailable. Ask the host to check the media upload.'));
-  box.append(heading,video);
-  if(briefingMode)box.append(resume);
-  else box.append(fullscreen,button('Close player',()=>{video.pause();box.remove();}));
+  box.append(heading,video,fullscreen,button('Close player',()=>{video.pause();box.remove();}));
   $('screen').append(box);start();
 }
 function render(next){
@@ -139,7 +220,7 @@ function renderControls(){
       controls.append(group);
     }
     const actions=make('div');actions.className='actions';
-    if(state.briefing==='ready')actions.append(button('Play briefing',async()=>{await update('briefing');play(briefing.map(c=>c.filename),'The Last Loan · Briefing',()=>update('briefing-shown'),{briefingMode:true});}));
+    if(state.briefing==='ready')actions.append(button('Start briefing',playBriefing));
     if(state.briefing==='playing')actions.append(button('Mark briefing shown',()=>update('briefing-shown')));
     if(state.phase==='briefing'&&state.briefing==='shown'){
       const start=button('Start Investigation',()=>update('start'));start.disabled=covered!==6;actions.append(start);
