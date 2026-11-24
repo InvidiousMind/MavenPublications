@@ -30,5 +30,27 @@
         "CaseVault"
       ]
     }
-  ]
+  ],
+  "r2_buckets": [
+    {
+      "binding": "SEASONS_MEDIA",
+      "bucket_name": "maven-mystery-seasons-private"
+    }
+  ],
+  "previews": {
+    "r2_buckets": [
+      {
+        "binding": "SEASONS_MEDIA",
+        "bucket_name": "maven-mystery-seasons-private"
+      }
+    ],
+    "durable_objects": {
+      "bindings": [
+        {
+          "name": "VAULT",
+          "class_name": "CaseVault"
+        }
+      ]
+    }
+  }
 }
