@@ -64,6 +64,29 @@ async function upload(group,name) {
   assert.equal((await call(path('admin/asset',{group,slot:'S0001_E01',name}),{cookie:admin,body:bytes})).status,200);
 }
 for (const name of ['solution.pdf','host-guide.pdf','case-1.pdf','case-6.pdf','audit.pdf',transcript]) await upload('episode',name);
+const accountDetails = async id=>(await call('/api/admin/account?id='+id,{cookie:admin})).json();
+const assign = (id,revision,changes,cookie=admin)=>call('/api/admin/account/access',{
+  cookie,body:{userId:id,accessRevision:revision,changes}
+});
+const detail = await accountDetails(first);
+assert.equal(detail.products.find(p=>p.key==='seasons:host').enabled,true);
+assert.equal(detail.products.find(p=>p.key==='seasons:product').enabled,false);
+const productGrant = [{key:'seasons:product',enabled:true,expiresOn:'2099-01-01'}];
+assert.equal((await assign(first,detail.accessRevision,productGrant,host)).status,403);
+assert.equal((await assign(first,detail.accessRevision,productGrant)).status,200);
+assert.equal((await assign(first,detail.accessRevision,productGrant)).status,409);
+const updated = await accountDetails(first);
+const expires = updated.products.find(p=>p.key==='seasons:product').expires;
+assert.equal(new Date(expires).getUTCFullYear(),new Date().getUTCFullYear()+1);
+const dashboard = await (await call('/api/account/me',{cookie:host})).json();
+assert.ok(dashboard.items.some(item=>item.destination==='/mystery-seasons-game?product=1'));
+assert.equal((await call(path('product',{name:'case-1.pdf'}),{cookie:host})).status,200);
+assert.equal((await call(path('product',{name:'solution.pdf'}),{cookie:host})).status,403);
+assert.equal((await call(path('product',{name:'host-guide.pdf'}),{cookie:host})).status,403);
+assert.equal((await call(path('product',{name:'case-1.pdf'}),{cookie:other})).status,403);
+assert.equal((await assign(first,updated.accessRevision,[{key:'seasons:product',enabled:false}])).status,200);
+assert.equal((await call(path('product'),{cookie:host})).status,403);
+assert.equal((await accountDetails(first)).products.find(p=>p.key==='seasons:host').enabled,true);
 await upload('shared',briefing[0].filename);
 await upload('episode',briefing[5].filename);
 for (const name of Object.values(reactionFiles)) await upload('shared',name+'.mp4');
