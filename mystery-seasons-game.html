@@ -6,13 +6,20 @@
 <link rel="icon" href="/maven-icon.svg" type="image/svg+xml">
 <title>The Last Loan | MAVEN Mystery Seasons</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.workspace iframe{width:100%;height:65vh;border:1px solid #b79a68}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere} @media(max-width:720px){.workspace{display:block}.workspace[data-tab="journal"] .evidence,.workspace[data-tab="evidence"] .journal{display:none}}@media(min-width:721px){.mobile-tabs{display:none}}
+*{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:1rem}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere} @media(max-width:720px){.workspace{display:block}.workspace[data-tab="journal"] .evidence,.workspace[data-tab="evidence"] .journal{display:none}}@media(min-width:721px){.mobile-tabs{display:none}}
 #briefing-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#080b10;color:white;overflow:hidden}
 #briefing-view::backdrop{background:#080b10}
 #briefing-view video,#briefing-view canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:contain;background:#080b10;pointer-events:none}
 #briefing-message{position:absolute;inset:auto 1rem 1rem;text-align:center}
 #briefing-message p{width:fit-content;margin:.5rem auto;padding:.35rem .65rem;background:#080b10}
 #briefing-message p:empty{display:none}
+#pdf-view{width:min(96%,65rem);height:92dvh;max-width:none;max-height:none;border:1px solid #b79a68;background:#fdfbf5;padding:0}
+#pdf-view::backdrop{background:#080b10bb}
+#pdf-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;padding:.75rem;background:#e8edf2}
+#pdf-title{flex:1 0 100%;margin:0}
+#pdf-pages{height:100%;overflow:auto;padding:.5rem;background:#dce2e9;touch-action:pan-x pan-y pinch-zoom}
+#pdf-pages canvas{display:block;margin:auto;background:white}
+#pdf-layout{display:flex;flex-direction:column;height:100%;min-height:0}
 </style>
 </head>
 <body>
@@ -31,13 +38,26 @@
   <canvas hidden aria-hidden="true"></canvas>
   <div id="briefing-message"><p role="status"></p><button type="button" hidden></button></div>
 </dialog>
+<dialog id="pdf-view" aria-labelledby="pdf-title">
+  <div id="pdf-layout">
+    <div id="pdf-toolbar">
+      <h2 id="pdf-title"></h2>
+      <button id="pdf-prev" type="button" disabled>Previous</button>
+      <button id="pdf-next" type="button" disabled>Next</button>
+      <button id="pdf-zoom" type="button" aria-pressed="false" disabled>Zoom in</button>
+      <button id="pdf-close" type="button" autofocus>Close</button>
+      <span id="pdf-status" role="status"></span>
+    </div>
+    <div id="pdf-pages"><canvas hidden></canvas></div>
+  </div>
+</dialog>
 <script type="module">
 import {briefing, transcript, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
 const $ = id=>document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const isHost = params.get('host')==='1';
 const isProduct = params.get('product')==='1';
-let room = params.get('room')||'', secret = '', privateCode = '', previewURL = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
+let room = params.get('room')||'', secret = '', privateCode = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
 let state, refreshing=false;
 const make = (tag,text) => {const e=document.createElement(tag);if(text)e.textContent=text;return e;};
 const report = message => {$('status').textContent=message;};
@@ -55,25 +75,71 @@ async function api(action, payload) {
   if(!response.ok) throw Error(result.error||'Request failed.');
   return result;
 }
-async function readAsset(name) {
-  const response=await fetch(asset(name),{headers:secret?{'x-room-credential':secret}:{}});
+async function readAsset(name,signal) {
+  const response=await fetch(asset(name),{signal,headers:secret?{'x-room-credential':secret}:{}});
   if(!response.ok){
     const failure=await response.json().catch(()=>({}));
     throw Error(failure.error||'This material is unavailable.');
   }
   return response;
 }
-function link(label,name) {
-  if(secret && name.endsWith('.pdf'))return button(label,async()=>{
-    const tab=window.open('about:blank','_blank');
-    if(!tab)throw Error('Allow pop-ups to open this document.');
-    tab.opener=null;
+const pdfView=$('pdf-view');
+let pdfLibrary;
+async function viewPdf(title,name){
+  const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
+  const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
+  const abort=new AbortController();
+  let loading, documentPdf, rendering, pageNumber=1, enlarged=false;
+  $('pdf-title').textContent=title;
+  status.textContent='Loading document…';
+  canvas.hidden=true;
+  zoom.textContent='Zoom in';zoom.setAttribute('aria-pressed','false');
+  previous.disabled=next.disabled=zoom.disabled=true;
+  pdfView.addEventListener('close',()=>{
+    abort.abort();
+    rendering?.cancel();
+    loading?.destroy().catch(()=>{});
+    canvas.width=canvas.height=0;
+  },{once:true});
+  async function draw(){
+    previous.disabled=next.disabled=zoom.disabled=true;
     try{
-      const url=URL.createObjectURL(await (await readAsset(name)).blob());
-      tab.location.replace(url);
-      setTimeout(()=>URL.revokeObjectURL(url),120000);
-    }catch(error){tab.close();throw error;}
-  });
+      const page=await documentPdf.getPage(pageNumber);
+      if(abort.signal.aborted)return;
+      const width=Math.max(1,pages.clientWidth-18)*(enlarged?1.75:1);
+      const pixelRatio=Math.min(devicePixelRatio||1,2);
+      const viewport=page.getViewport({scale:width*pixelRatio/page.getViewport({scale:1}).width});
+      canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
+      canvas.style.width=width+'px';
+      rendering=page.render({canvasContext:canvas.getContext('2d'),viewport});
+      await rendering.promise;
+      if(abort.signal.aborted)return;
+      canvas.hidden=false;pages.scrollTop=0;pages.scrollLeft=0;
+      status.textContent='Page '+pageNumber+' of '+documentPdf.numPages;
+      previous.disabled=pageNumber===1;next.disabled=pageNumber===documentPdf.numPages;zoom.disabled=false;
+    }catch(error){if(!abort.signal.aborted)status.textContent='This page could not be displayed.';}
+  }
+  $('pdf-close').onclick=()=>pdfView.close();
+  previous.onclick=()=>{pageNumber--;void draw();};
+  next.onclick=()=>{pageNumber++;void draw();};
+  zoom.onclick=()=>{
+    enlarged=!enlarged;
+    zoom.textContent=enlarged?'Fit width':'Zoom in';zoom.setAttribute('aria-pressed',String(enlarged));
+    void draw();
+  };
+  pdfView.showModal();
+  try{
+    pdfLibrary??=import('/pdf-viewer/pdf.min.mjs').catch(error=>{pdfLibrary=undefined;throw error;});
+    const [pdf,data]=await Promise.all([pdfLibrary,readAsset(name,abort.signal).then(response=>response.arrayBuffer())]);
+    if(abort.signal.aborted)return;
+    pdf.GlobalWorkerOptions.workerSrc='/pdf-viewer/pdf.worker.min.mjs';
+    loading=pdf.getDocument({data,isEvalSupported:false});
+    documentPdf=await loading.promise;
+    if(!abort.signal.aborted)await draw();
+  }catch(error){if(!abort.signal.aborted)status.textContent=error.message||'This document could not be opened.';}
+}
+function link(label,name){
+  if(name.endsWith('.pdf'))return button(label,()=>viewPdf(label,name));
   const a=make('a',label); a.href=asset(name); a.target='_blank'; a.rel='noopener'; return a;
 }
 function showText(label,name) {
@@ -252,7 +318,6 @@ function renderControls(){
 }
 function renderWorkspace(player){
   const root=$('workspace');root.replaceChildren();
-  if(previewURL){URL.revokeObjectURL(previewURL);previewURL='';}
   if(!player.files.length){root.append(make('p','Your assigned case files will open when the host starts the investigation.'));return;}
   const nav=make('nav');root.append(nav);
   const pane=make('div');pane.className='workspace';pane.dataset.tab='evidence';
@@ -263,15 +328,7 @@ function renderWorkspace(player){
     activeFile=file;
     const [,title]=caseTitles[file-1], prompts=player.prompts[file], evidence=make('article'),journal=make('article');
     evidence.className='evidence';journal.className='journal';
-    if(previewURL){URL.revokeObjectURL(previewURL);previewURL='';}
-    const name='case-'+file+'.pdf', frame=make('iframe'), loading=make('p','Loading case file…');
-    frame.title='Case File '+file;
-    frame.hidden=true;
-    evidence.append(make('h3',title),link('Open case file in a new tab',name),loading,frame);
-    readAsset(name).then(response=>response.blob()).then(blob=>{
-      if(!evidence.isConnected)return;
-      previewURL=URL.createObjectURL(blob);frame.src=previewURL;frame.hidden=false;loading.remove();
-    }).catch(error=>{loading.textContent=error.message;});
+      evidence.append(make('h3',title),button('Open case file',()=>viewPdf(title,'case-'+file+'.pdf')));
     const draftKey='journal:'+room+':'+secret+':'+file;
     const initial=JSON.parse(sessionStorage.getItem(draftKey)||'null')||state.player.journals[file]?.answers||[];
     journal.append(make('h3','Investigation Journal '+file),make('p','Answer each prompt or explain what the evidence does not establish.'));
