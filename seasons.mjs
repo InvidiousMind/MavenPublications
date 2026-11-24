@@ -17,14 +17,14 @@ const digest = async value => Array.from(new Uint8Array(await crypto.subtle.dige
 const outcomes = ['CORRECT','WRONG_RETRY','CONVICT_ANYWAY'];
 const fileNumbers = [1,2,3,4,5,6];
 const documentSlots = ['start','audit','journals','solution','host-guide',...fileNumbers.map(n=>'case-'+n)];
-const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html)$/;
+const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html|png)$/;
 const isOpen = room => room && room.expires > Date.now();
 const canReadFile = (room, guest, file) => !!guest && guest.files.includes(file) && room.phase !== 'briefing';
 const publicRoom = (room, guest, host) => ({
-  phase:room.phase, code:room.code, briefing:room.briefing, audit:room.audit,
+  phase:room.phase, code:room.code, edition:room.edition||null, briefing:room.briefing, audit:room.audit,
   outcome:room.outcome, reveal:room.reveal, reaction:room.reaction, expires:room.expires,
   ...(host ? {players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
-    : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
+    : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),images:room.phase==='briefing'?[]:[...terminalImages].filter(name=>guest.files.includes(Number(name.slice(9,11)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
 });
 
 export async function seasonsHostAccess(db, session) {
@@ -44,8 +44,13 @@ function roomCode() {
   return Array.from(crypto.getRandomValues(new Uint8Array(6)), n=>alphabet[n % alphabet.length]).join('');
 }
 
+const terminalPdfs = /^(?:case-[1-6]|start|journals|audit)\.pdf$/;
+const terminalImages = new Set('01-02 01-04 01-05 01-09 02-02 02-03 02-04 02-05 02-06 02-09 03-02 03-03 03-08 04-03 05-02 05-03 05-04 05-06 05-10 06-02 06-04'.split(' ').map(id=>'evidence-'+id+'.png'));
+const terminalKey = name=>episode+'/terminal-v02/'+name;
+const terminalBriefingAsset = /^(?:MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_(?:(?:CASE_INTRO|BM_03_PUBLIC_LISTING)_CC_V06\.mp4|Final_Transcript_V06\.txt))$/;
 function storageKey(group, name, slot) {
   if (!assetPattern.test(name)) return null;
+  if (group === 'terminal-v02' && slot === episode && (terminalPdfs.test(name) || terminalImages.has(name) || terminalBriefingAsset.test(name))) return terminalKey(name);
   if (group === 'shared' && /\.(mp4|txt|json)$/.test(name)) return 'shared/'+name;
   if (group === 'episode' && /^S\d{4}_E\d{2}$|^special-[a-z0-9-]+$/.test(slot)) return slot+'/'+name;
   return null;
@@ -100,10 +105,27 @@ async function route({db,env,session:readSession,limited},request) {
       if (!key) return error('Invalid file location.');
       if (!post) return json({uploaded:!!await bucket.head(key)});
       if (!request.body || !Number.isSafeInteger(length) || length < 1 || length > 50*1024*1024) return error('Choose a supported file under 50 MB.');
-      const types = {mp4:'video/mp4',pdf:'application/pdf',txt:'text/plain; charset=utf-8',json:'application/json',html:'text/html; charset=utf-8'};
+      const types = {mp4:'video/mp4',pdf:'application/pdf',png:'image/png',txt:'text/plain; charset=utf-8',json:'application/json',html:'text/html; charset=utf-8'};
       const bytes = await request.arrayBuffer();
       if (bytes.byteLength!==length) return error('Incomplete file upload.');
       await bucket.put(key,bytes,{httpMetadata:{contentType:types[key.split('.').pop()]}});
+      return json({ok:true});
+    }
+    if (action==='admin/terminal-release' && post) {
+      if (!bucket) return error('Private media storage is not configured.',503);
+      const {clips,transcript}= (await import('./seasons-content.mjs')).briefingForEdition(true);
+      const keys=[
+        ...['start.pdf','audit.pdf','journals.pdf',...fileNumbers.map(n=>'case-'+n+'.pdf'),...terminalImages,transcript].map(terminalKey),
+        ...clips.map(clip=>terminalBriefingAsset.test(clip.filename)?terminalKey(clip.filename):(clip.scope==='shared'?'shared':episode)+'/'+clip.filename)
+      ];
+      const missing=[];
+      for(let i=0;i<keys.length;i+=6){
+        const batch=keys.slice(i,i+6);
+        const objects=await Promise.all(batch.map(key=>bucket.head(key)));
+        missing.push(...batch.filter((_,index)=>!objects[index]));
+      }
+      if(missing.length)return error('Missing release files: '+missing.map(key=>key.split('/').pop()).join(', '),409);
+      await db.put('seasons:active-edition','terminal-v02');
       return json({ok:true});
     }
     if (!post || !['admin/grant','admin/code'].includes(action)) return error('Unknown admin action.',404);
@@ -155,9 +177,10 @@ async function route({db,env,session:readSession,limited},request) {
   const grant = await seasonsHostAccess(db,session);
   if (action === 'create' && post) {
     if (!grant) return error('Active Episode 1 host access required.',403);
+    const edition=url.searchParams.get('edition')==='terminal-v02'?'terminal-v02':await db.get('seasons:active-edition');
     for (let attempt=0;attempt<8;attempt++) {
       const code = roomCode();
-      const room = {code,host:session.userId,expires:Date.now()+roomLifetime,phase:'briefing',briefing:'ready',audit:false,reveal:false,players:[]};
+      const room = {code,edition:edition||null,host:session.userId,expires:Date.now()+roomLifetime,phase:'briefing',briefing:'ready',audit:false,reveal:false,players:[]};
       const created = await db.transaction(async tx=>{
         if (isOpen(await tx.get('seasons:room:'+code))) return false;
         await tx.put('seasons:room:'+code,room);
@@ -231,8 +254,12 @@ async function route({db,env,session:readSession,limited},request) {
     if (action==='state') return json(publicRoom(room,guest,host));
     if (action!=='asset') return error('Unknown room action.',404);
     const name = url.searchParams.get('name')||'';
+    const terminal = room.edition==='terminal-v02';
     let objectKey;
-    if (documentSlots.some(slot=>name===slot+'.pdf') || ['host.html','player.html','journals.json'].includes(name)) {
+    if (terminal && terminalImages.has(name)) {
+      if (!host && !canReadFile(room,guest,Number(name.slice(9,11)))) return error('This material is restricted.',403);
+      objectKey = terminalKey(name);
+    } else if (documentSlots.some(slot=>name===slot+'.pdf') || ['host.html','player.html','journals.json'].includes(name)) {
       const file = /^case-([1-6])\.pdf$/.exec(name);
       const allowed = ['solution.pdf','host-guide.pdf','host.html'].includes(name) ? host
         : file ? host || canReadFile(room,guest,Number(file[1]))
@@ -240,17 +267,18 @@ async function route({db,env,session:readSession,limited},request) {
         : ['journals.pdf','journals.json'].includes(name) ? host
         : true;
       if (!allowed) return error('This material is restricted.',403);
-      objectKey = episode+'/'+name;
+      objectKey = terminal && terminalPdfs.test(name) ? terminalKey(name) : episode+'/'+name;
     } else {
       const selected = assetPattern.test(name);
       if (!selected) return error('Media unavailable.',404);
-      const {briefing,reactionFiles,transcript,credit} = await import('./seasons-content.mjs');
+      const {briefingForEdition,reactionFiles,credit} = await import('./seasons-content.mjs');
+      const {clips:briefing,transcript}=briefingForEdition(terminal);
       const clip = briefing.find(entry=>entry.filename===name);
       const reactionFile = reactionFiles[room.outcome];
       if (clip && (room.briefing==='playing' || (room.briefing==='shown' && clip.review_after_briefing))) {
-        objectKey = (clip.scope==='shared'?'shared':episode)+'/'+name;
+        objectKey = terminalBriefingAsset.test(name)?terminalKey(name):(clip.scope==='shared'?'shared':episode)+'/'+name;
       } else if ((name===transcript && room.briefing==='shown') || name===credit) {
-        objectKey = episode+'/'+name;
+        objectKey = terminalBriefingAsset.test(name)?terminalKey(name):episode+'/'+name;
       } else if (reactionFile && name===reactionFile+'.txt') {
         objectKey = 'shared/'+name;
       } else if (reactionFile && name===reactionFile+'.mp4' && room.reaction.active) {
