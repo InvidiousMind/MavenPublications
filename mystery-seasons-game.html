@@ -62,6 +62,21 @@ body:has(.player-session) main>h1{color:#fff8e5}
 .pdf-sheet .textLayer{position:absolute;inset:0;overflow:hidden;text-align:initial;transform-origin:0 0;line-height:1;z-index:1}
 .textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0}
 .textLayer ::selection{background:#456fa477}
+body:has(.host-session){background:#192932;color:#fff8e5}
+body:has(.host-session) header{background:#101b23;border-bottom:2px solid #b79a68}
+body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host-session) #status{color:#fff8e5}
+.host-session #controls{display:grid;gap:1rem}
+.host-session #controls>details,.host-stage,.host-roster{background:#253942;border:1px solid #a8976e;padding:1rem;margin:0}
+.host-session summary{cursor:pointer;color:#f1d79c;font-weight:700}
+.host-session details nav{margin-top:.65rem;gap:.65rem}
+.host-session h3{margin:0 0 .5rem}
+.host-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,19rem),1fr));gap:.8rem}
+.host-cards fieldset{min-width:0;margin:0;background:#30454d;border-color:#a8976e}
+.host-cards legend{color:#f1d79c;padding:0 .35rem}
+.host-cards label{display:flex;align-items:baseline;gap:.3rem}
+.host-session button{background:#152c39;border-color:#8fa2ac}
+.host-stage button{background:#e8d2a0;color:#172831;border-color:#e8d2a0;font-weight:700}
+.host-session a{color:#f1d79c}
 </style>
 </head>
 <body>
@@ -130,7 +145,7 @@ async function readAsset(name,signal) {
 }
 const pdfView=$('pdf-view');
 let pdfLibrary;
-async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
+async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage}={}){
   const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
   const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
   const image=pages.querySelector('img'), imageButton=$('pdf-image'), layer=pages.querySelector('.textLayer');
@@ -138,8 +153,8 @@ async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
   const abort=new AbortController();
   let imageUrl='', showingImage=false, textLayer;
   sheet.hidden=false;image.hidden=true;layer.replaceChildren();
-  imageButton.hidden=!imageName;imageButton.textContent='View exhibit image';
-  let loading, documentPdf, rendering, pageNumber=firstPage, enlarged=false;
+  imageButton.hidden=true;imageButton.textContent='View exhibit image';
+  let loading, documentPdf, rendering, pageNumber=startPage, enlarged=false;
   $('pdf-title').textContent=title;
   status.textContent='Loading document…';
   canvas.hidden=true;
@@ -155,7 +170,11 @@ async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
     canvas.width=canvas.height=0;
   },{once:true});
   async function draw(){
-    previous.disabled=next.disabled=zoom.disabled=true;
+    previous.disabled=next.disabled=zoom.disabled=imageButton.disabled=true;
+    if(imageUrl)URL.revokeObjectURL(imageUrl);
+    imageUrl='';showingImage=false;image.hidden=true;sheet.hidden=false;image.removeAttribute('src');
+    imageButton.hidden=!imageForPage?.(pageNumber);
+    imageButton.textContent='View exhibit image';
     try{
       const page=await documentPdf.getPage(pageNumber);
       if(abort.signal.aborted)return;
@@ -178,8 +197,8 @@ async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
       if(abort.signal.aborted)return;
       canvas.hidden=false;pages.scrollTop=0;pages.scrollLeft=0;
       const endPage=Math.min(lastPage??documentPdf.numPages,documentPdf.numPages);
-      status.textContent=firstPage===lastPage?'Evidence page '+pageNumber:'Page '+pageNumber+' of '+endPage;
-      previous.disabled=pageNumber<=firstPage;next.disabled=pageNumber>=endPage;zoom.disabled=false;
+      status.textContent=imageForPage?'Evidence '+String(pageNumber).padStart(2,'0')+' of '+endPage:'Page '+pageNumber+' of '+endPage;
+      previous.disabled=pageNumber<=firstPage;next.disabled=pageNumber>=endPage;zoom.disabled=imageButton.disabled=false;
     }catch(error){if(!abort.signal.aborted)status.textContent='This page could not be displayed.';}
   }
   $('pdf-close').onclick=()=>pdfView.close();
@@ -189,10 +208,10 @@ async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
     image.style.width=(Math.max(1,pages.clientWidth-18)*(enlarged?1.75:1))+'px';
   }
   imageButton.onclick=async()=>{
-    imageButton.disabled=true;
+    previous.disabled=next.disabled=imageButton.disabled=true;
     try{
       if(!imageUrl){
-        const blob=await (await readAsset(imageName,abort.signal)).blob();
+        const blob=await (await readAsset(imageForPage(pageNumber),abort.signal)).blob();
         if(abort.signal.aborted)return;
         imageUrl=URL.createObjectURL(blob);
         image.src=imageUrl;image.alt=title+' exhibit';
@@ -203,7 +222,7 @@ async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
       if(showingImage)sizeImage();
       pages.scrollTop=pages.scrollLeft=0;
     }catch(error){if(!abort.signal.aborted)status.textContent=error.message;}
-    finally{imageButton.disabled=false;}
+    finally{imageButton.disabled=false;previous.disabled=pageNumber<=firstPage;next.disabled=pageNumber>=Math.min(lastPage??documentPdf.numPages,documentPdf.numPages);}
   };
   zoom.onclick=()=>{
     enlarged=!enlarged;
@@ -341,9 +360,10 @@ function play(clips,title,finished){
 function render(next){
   state=next;
   terminalEdition=state.edition==='terminal-v02';
-  ({clips:briefing,transcript}=briefingForEdition(terminalEdition));
+  ({clips:briefing,transcript}=briefingForEdition(terminalEdition,state.audioV07));
   $('entry').hidden=true;$('session').hidden=false;
   $('session').classList.toggle('player-session',!!state.player);
+  $('session').classList.toggle('host-session',isHost&&!!state.players);
   $('room-heading').textContent='Room '+room;
   $('phase').textContent=({briefing:'Briefing Room',investigation:'Investigation',deduction:'Final deduction',feedback:'Host feedback',closed:'Case closed'})[state.phase];
   $('rejoin').textContent=privateCode?'Private rejoin code · '+privateCode:secret?'Rejoin with your existing code to receive a six-character code.':'';
@@ -357,10 +377,12 @@ function render(next){
   if(files!==lastFiles && state.player){lastFiles=files;renderWorkspace(state.player);}
 }
 function renderControls(){
-  const controls=$('controls'), referenceOpen=controls.querySelector('details')?.open, mediaOpen=controls.querySelector('details details')?.open;controls.replaceChildren();
+  const controls=$('controls'), referenceOpen=controls.querySelector('.briefing-menu')?.open, mediaOpen=controls.querySelector('.briefing-menu details')?.open, documentsOpen=controls.querySelector('.host-documents')?.open;controls.replaceChildren();
   if(isHost && state.players){
     const covered=new Set(state.players.flatMap(p=>p.files)).size;
-    controls.append(make('h3','Player roster'),make('p',covered+' of 6 files assigned'));
+    const roster=make('section');roster.className='host-roster';
+    roster.append(make('h3','Player roster'),make('p',covered+' of 6 files assigned'));
+    const cards=make('div');cards.className='host-cards';roster.append(cards);
     for(const player of state.players){
       const group=make('fieldset');group.append(make('legend',player.name));
       const picks=caseTitles.map(([id,title])=>{
@@ -368,8 +390,9 @@ function renderControls(){
         const current=state.players.find(p=>p.files.includes(Number(id)));
         label.append(input,document.createTextNode(' '+id+' · '+title+(current&&current.id!==player.id?' · '+current.name:'')));group.append(label);return input;
       });
-      if(state.phase!=='closed')group.append(button('Save assignment',()=>update('assign',{player:player.id,files:picks.filter(i=>i.checked).map(i=>Number(i.value))})),button('Assign all six',()=>update('assign',{player:player.id,files:[1,2,3,4,5,6]})));
-      controls.append(group);
+      const assignment=make('div');assignment.className='actions';
+      if(state.phase!=='closed')assignment.append(button('Save assignment',()=>update('assign',{player:player.id,files:picks.filter(i=>i.checked).map(i=>Number(i.value))})),button('Assign all six',()=>update('assign',{player:player.id,files:[1,2,3,4,5,6]})));
+      group.append(assignment);cards.append(group);
     }
     const actions=make('div');actions.className='actions';
     if(state.briefing==='ready')actions.append(button('Start briefing',playBriefing));
@@ -389,8 +412,14 @@ function renderControls(){
       actions.append(button('Replay wrong deduction reaction',()=>update('outcome',{outcome:'WRONG_RETRY'})),button('Resume investigation',()=>update('resume')));
     }
     if(state.phase==='closed'&&state.outcome==='CORRECT'&&!state.reveal)actions.append(button('Authorise solution reveal',()=>update('reveal')));
-    controls.append(actions);
-    const hostLinks=make('nav');hostLinks.append(link('Host briefing guide','host-guide.pdf'),link('Master Solution · Host only','solution.pdf'),link('Host HTML','host.html'));controls.append(hostLinks);
+    if(actions.childElementCount){
+      const stage=make('section');stage.className='host-stage';
+      stage.append(make('h3','Session controls'),actions);controls.prepend(stage);
+    }
+    controls.append(roster);
+    const hostLinks=make('nav');hostLinks.append(link('Host briefing guide','host-guide.pdf'),link('Master Solution · Host only','solution.pdf'));const tools=make('details');
+    tools.className='host-documents';tools.open=!!documentsOpen;
+    tools.append(make('summary','Host documents'),hostLinks);controls.append(tools);
   }
   const review=make('nav');review.append(link('Start Here','start.pdf'));
   if(state.briefing==='shown'){
@@ -398,8 +427,7 @@ function renderControls(){
     const media=make('nav');
     for(const clip of briefing.filter(c=>c.review_after_briefing))media.append(button(clip.label,()=>play([clip.filename],clip.label)));
     media.append(showText('Music credits',credit));
-    if(isHost)review.append(media);
-    else{
+    {
       const mediaMenu=make('details');
       mediaMenu.open=!!mediaOpen;
       mediaMenu.append(make('summary','View Briefing Media'),media);
@@ -409,10 +437,9 @@ function renderControls(){
   if(isHost&&state.audit)review.append(link('Open Evidence Audit','audit.pdf'));
   if(state.outcome)review.append(showText('Read Chief’s Reaction',reactionFiles[state.outcome]+'.txt'));
   if(state.reveal)review.append(make('p','The host has authorised the solution reveal.'));
-  if(isHost)controls.append(review);
-  else{
+  {
     const reference=make('details');
-    reference.open=!!referenceOpen;
+    reference.className='briefing-menu';reference.open=!!referenceOpen;
     reference.append(make('summary','Briefing'),review);
     controls.append(reference);
   }
@@ -475,11 +502,11 @@ function renderWorkspace(player){
     evidence.onchange=safely(async()=>{
       const page=Number(evidence.value);
       if(!page)return;
-      const label=evidence.selectedOptions[0].textContent;
       evidence.value='';
-      const imageName='evidence-'+String(file).padStart(2,'0')+'-'+String(page).padStart(2,'0')+'.png';
-      await viewPdf(title+' · '+label,'case-'+file+'.pdf',{firstPage:page,lastPage:page,
-        imageName:terminalEdition&&player.images?.includes(imageName)?imageName:undefined});
+      await viewPdf(title,'case-'+file+'.pdf',{startPage:page,lastPage:10,imageForPage:number=>{
+        const name='evidence-'+String(file).padStart(2,'0')+'-'+String(number).padStart(2,'0')+'.png';
+        return terminalEdition&&player.images?.includes(name)?name:undefined;
+      }});
 
     });
     evidencePicker=evidenceLabel;selectors.append(evidencePicker);

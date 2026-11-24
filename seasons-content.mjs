@@ -67,11 +67,19 @@ export const briefing = [
   }
 ];
 export const transcript = "MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_Final_Transcript_V05.txt";
-export function briefingForEdition(terminal){
+const v07Slots = {
+  0:'CHIEF_INTRO',2:'ANNOUNCEMENT',3:'BRIEFING_ARRIVAL_TO_TV',
+  4:'CASE_INTRO',8:'BM_04_VISITOR_PHOTO',10:'BRIEFING_CLOSING'
+};
+const v07Filename = label=>'MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_'+label+'_CC_AUDIO_V07.mp4';
+export const v07Files = Object.values(v07Slots).map(v07Filename);
+export function briefingForEdition(terminal,audioV07=false){
   if(!terminal)return {clips:briefing,transcript};
   const replaces=new Set([briefing[4].filename,briefing[7].filename]);
   return {
-    clips:briefing.map(clip=>replaces.has(clip.filename)
+    clips:briefing.map((clip,index)=>audioV07&&v07Slots[index]
+      ? {...clip,filename:v07Filename(v07Slots[index]),scope:'episode-specific'}
+      : replaces.has(clip.filename)
       ? {...clip,filename:clip.filename.replace('.mp4','_V06.mp4')}
       : clip),
     transcript:transcript.replace('_V05.txt','_V06.txt')
