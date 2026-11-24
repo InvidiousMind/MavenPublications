@@ -50,9 +50,7 @@ function seasonsCard(item){
  if(item.host&&!item.solo){
   const access=element('details','');
   const contact=element('a','Get in touch');contact.href='/index.html#contact';contact.className='text-button';
-  const activate=element('a','Activate a product code');activate.href='#activate';activate.className='text-button';
-  const links=element('div','');links.className='member-overview-actions';links.append(contact,activate);
-  access.append(element('summary','Get Solo access'),element('p','Solo licences are sold in person. If you already have a product code, activate it on this account.'),links);
+  access.append(element('summary','Get Solo access'),element('p','Buy a Solo licence in person and MAVEN will add it to this account.'),contact);
   card.append(actions,access);
  }else card.append(actions);
  return card;
