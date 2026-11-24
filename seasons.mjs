@@ -47,9 +47,10 @@ function roomCode() {
 const terminalPdfs = /^(?:case-[1-6]|start|journals|audit)\.pdf$/;
 const terminalImages = new Set('01-02 01-04 01-05 01-09 02-02 02-03 02-04 02-05 02-06 02-09 03-02 03-03 03-08 04-03 05-02 05-03 05-04 05-06 05-10 06-02 06-04'.split(' ').map(id=>'evidence-'+id+'.png'));
 const terminalKey = name=>episode+'/terminal-v02/'+name;
+const terminalBriefingAsset = /^(?:MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_(?:(?:CASE_INTRO|BM_03_PUBLIC_LISTING)_CC_V06\.mp4|Final_Transcript_V06\.txt))$/;
 function storageKey(group, name, slot) {
   if (!assetPattern.test(name)) return null;
-  if (group === 'terminal-v02' && slot === episode && (terminalPdfs.test(name) || terminalImages.has(name))) return terminalKey(name);
+  if (group === 'terminal-v02' && slot === episode && (terminalPdfs.test(name) || terminalImages.has(name) || terminalBriefingAsset.test(name))) return terminalKey(name);
   if (group === 'shared' && /\.(mp4|txt|json)$/.test(name)) return 'shared/'+name;
   if (group === 'episode' && /^S\d{4}_E\d{2}$|^special-[a-z0-9-]+$/.test(slot)) return slot+'/'+name;
   return null;
@@ -252,13 +253,14 @@ async function route({db,env,session:readSession,limited},request) {
     } else {
       const selected = assetPattern.test(name);
       if (!selected) return error('Media unavailable.',404);
-      const {briefing,reactionFiles,transcript,credit} = await import('./seasons-content.mjs');
+      const {briefingForEdition,reactionFiles,credit} = await import('./seasons-content.mjs');
+      const {clips:briefing,transcript}=briefingForEdition(terminal);
       const clip = briefing.find(entry=>entry.filename===name);
       const reactionFile = reactionFiles[room.outcome];
       if (clip && (room.briefing==='playing' || (room.briefing==='shown' && clip.review_after_briefing))) {
-        objectKey = (clip.scope==='shared'?'shared':episode)+'/'+name;
+        objectKey = terminalBriefingAsset.test(name)?terminalKey(name):(clip.scope==='shared'?'shared':episode)+'/'+name;
       } else if ((name===transcript && room.briefing==='shown') || name===credit) {
-        objectKey = episode+'/'+name;
+        objectKey = terminalBriefingAsset.test(name)?terminalKey(name):episode+'/'+name;
       } else if (reactionFile && name===reactionFile+'.txt') {
         objectKey = 'shared/'+name;
       } else if (reactionFile && name===reactionFile+'.mp4' && room.reaction.active) {

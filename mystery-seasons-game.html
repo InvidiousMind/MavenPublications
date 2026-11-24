@@ -95,12 +95,13 @@ body:has(.player-session) main>h1{color:#fff8e5}
   </div>
 </dialog>
 <script type="module">
-import {briefing, transcript, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
+import {briefingForEdition, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
 const $ = id=>document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const isHost = params.get('host')==='1';
 const isProduct = params.get('product')==='1';
 const terminalEdition = !isProduct && params.get('edition')==='terminal-v02';
+const {clips:briefing,transcript}=briefingForEdition(terminalEdition);
 let room = params.get('room')||'', secret = '', privateCode = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
 let state, refreshing=false;
 const make = (tag,text) => {const e=document.createElement(tag);if(text)e.textContent=text;return e;};

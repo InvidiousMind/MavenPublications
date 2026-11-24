@@ -67,6 +67,16 @@ export const briefing = [
   }
 ];
 export const transcript = "MAVEN_MYSTERY_S0001_E01_HIGH_VALUE_THEFT_Final_Transcript_V05.txt";
+export function briefingForEdition(terminal){
+  if(!terminal)return {clips:briefing,transcript};
+  const replaces=new Set([briefing[4].filename,briefing[7].filename]);
+  return {
+    clips:briefing.map(clip=>replaces.has(clip.filename)
+      ? {...clip,filename:clip.filename.replace('.mp4','_V06.mp4')}
+      : clip),
+    transcript:transcript.replace('_V05.txt','_V06.txt')
+  };
+}
 export const credit = "MAVEN_SPY_GLASS_MUSIC_CREDIT.txt";
 export const reactionFiles = Object.fromEntries(["CORRECT","WRONG_RETRY","CONVICT_ANYWAY"].map(key=>[key,"MAVEN_MYSTERY_GLOBAL_DEDUCTION_"+key]));
 export const caseTitles = [
