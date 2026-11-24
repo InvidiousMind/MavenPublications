@@ -7,8 +7,8 @@
 <title>The Last Loan | MAVEN Mystery Seasons</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere}
-#briefing-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#080b10;color:white;overflow:hidden}
-#briefing-view::backdrop{background:#080b10}
+#briefing-view,#ending-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#080b10;color:white;overflow:hidden}
+#briefing-view::backdrop,#ending-view::backdrop{background:#080b10}
 #briefing-view video,#briefing-view canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:contain;background:#080b10;pointer-events:none}
 #briefing-message{position:absolute;inset:auto 1rem 1rem;text-align:center}
 #briefing-message p{width:fit-content;margin:.5rem auto;padding:.35rem .65rem;background:#080b10}
@@ -96,6 +96,11 @@ body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host
 .journal-references select{max-width:100%;min-height:40px}
 .journal-references button{margin:0}
 #pdf-journals-back{order:-1}
+#ending-view video{width:100%;height:100%;object-fit:contain}
+.ending-tools{position:absolute;inset:auto 1rem 1rem;background:#080b10;color:white;text-align:center;padding:.5rem}
+.ending-tools:empty{display:none}
+.licence-row{margin-block:.75rem;overflow-wrap:anywhere}
+.licence-row input{max-width:100%;width:32rem}
 </style>
 </head>
 <body>
@@ -138,6 +143,10 @@ body:has(.host-session) main>h1,.host-session h2,.host-session h3,body:has(.host
   <div id="journal-submissions"></div>
   <div id="journal-detail" hidden></div>
 </dialog>
+<dialog id="ending-view" aria-label="Chief Vance’s reaction">
+  <video playsinline></video>
+  <div class="ending-tools" aria-live="polite"></div>
+</dialog>
 <script type="module">
 import {briefingForEdition, credit, reactionFiles, caseTitles} from '/seasons-content.mjs';
 const $ = id=>document.getElementById(id);
@@ -174,7 +183,7 @@ async function readAsset(name,signal) {
 }
 const pdfView=$('pdf-view');
 let pdfLibrary;
-async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage,backToJournals}={}){
+async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imageForPage,backToJournals,onViewed}={}){
   const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
   const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
   const image=pages.querySelector('img'), imageButton=$('pdf-image'), layer=pages.querySelector('.textLayer');
@@ -268,7 +277,7 @@ async function viewPdf(title,name,{firstPage=1,lastPage,startPage=firstPage,imag
     pdf.GlobalWorkerOptions.workerSrc='/pdf-viewer/pdf.worker.min.mjs';
     loading=pdf.getDocument({data,isEvalSupported:false});
     documentPdf=await loading.promise;
-    if(!abort.signal.aborted)await draw();
+    if(!abort.signal.aborted){await draw();if(!abort.signal.aborted&&!canvas.hidden)onViewed?.();}
   }catch(error){if(!abort.signal.aborted)status.textContent=error.message||'This document could not be opened.';}
 }
 function link(label,name){
@@ -391,6 +400,86 @@ function play(clips,title,finished){
   box.append(heading,video,fullscreen,button('Close player',()=>{video.pause();box.remove();}));
   $('screen').append(box);start();
 }
+const endingView=$('ending-view');
+let viewedSolutionRoom='';
+function openEnding(){
+  if(!endingView.open)endingView.showModal();
+}
+function chooseOutcome(outcome){
+  openEnding();
+  endingView.querySelector('.ending-tools').textContent='Loading Chief Vance’s reaction…';
+  endingView.requestFullscreen?.().catch(()=>{});
+  return update('outcome',{outcome}).catch(error=>{endingView.close();throw error;});
+}
+endingView.addEventListener('cancel',event=>event.preventDefault());
+async function playEnding(id,outcome){
+  openEnding();
+  const video=endingView.querySelector('video'), tools=endingView.querySelector('.ending-tools');
+  let source;
+  const finish=async()=>{
+    tools.replaceChildren();
+    video.pause();
+    try{
+      if(isHost)await update('reaction-shown',{id});
+      video.removeAttribute('src');video.load();
+      if(source)URL.revokeObjectURL(source);
+      if(document.fullscreenElement===endingView)await document.exitFullscreen().catch(()=>{});
+      endingView.close();
+      if(!isHost)void refresh();
+    }catch(error){
+      tools.append(make('p',error.message),button('Try again',finish));
+    }
+  };
+  const start=async()=>{
+    tools.textContent='Loading Chief Vance’s reaction…';
+    try{
+      if(source)URL.revokeObjectURL(source);
+      source=URL.createObjectURL(await (await readAsset(reactionFiles[outcome]+'.mp4')).blob());
+      video.src=source;
+      tools.replaceChildren();
+      await video.play().catch(()=>{
+        tools.append(button('Play reaction',async()=>{await video.play();tools.replaceChildren();}));
+      });
+    }catch(error){unavailable();}
+  };
+  const unavailable=()=>{
+    tools.replaceChildren(make('p','The reaction video could not be played.'),button('Retry video',start),button('Continue',finish));
+  };
+  video.onended=finish;
+  video.onerror=unavailable;
+  await start();
+}
+function renderClosing(controls){
+  const correct=state.outcome==='CORRECT';
+  const section=make('section');section.className='host-stage';controls.append(section);
+  if(!isHost){
+    section.append(make('h3',correct?'Congratulations, detectives!':'Thanks for playing'),
+      make('p',correct?'You solved the case.':'We hope you enjoyed the investigation. Chief Vance has a long night ahead at the office.'));
+    const accounts=make('a','Create a MAVEN account or sign in');accounts.href='/account#activate';
+    if(state.reveal)section.append(make('p','The host has authorised the solution reveal.'));
+    section.append(make('p','Already have a licence? Sign in and activate it to play the episode solo.'),accounts);
+    return;
+  }
+  section.append(make('h3','Case closed'),make('p','Generate one Solo licence per player. The 7-day licence starts now. The 1-year licence starts when redeemed.'));
+  const players=make('ul');
+  for(const player of state.players){
+    const row=make('li',player.name);row.className='licence-row';
+    const licence=state.licences?.[player.id];
+    if(licence){
+      const input=make('input');input.readOnly=true;input.value=licence.code;
+      input.setAttribute('aria-label','Licence for '+player.name);input.onclick=()=>input.select();
+      row.append(make('p',licence.period==='week'?'7-day licence':'1-year licence'),input,
+        button('Copy licence',async()=>{await navigator.clipboard.writeText(licence.code);input.select();}));
+    }else{
+      row.append(button('Generate 7-day licence',()=>update('licence',{player:player.id,period:'week'})),
+        button('Generate 1-year licence',()=>update('licence',{player:player.id,period:'year'})));
+    }
+    players.append(row);
+  }
+  section.append(players);
+  if(correct&&!state.reveal)section.append(button('Authorise solution reveal',()=>update('reveal')));
+  section.append(button('View submitted journals',reviewJournals));
+}
 function render(next){
   state=next;
   terminalEdition=state.edition==='terminal-v02';
@@ -401,11 +490,11 @@ function render(next){
   $('room-heading').textContent='Room '+room;
   $('phase').textContent=({briefing:'Briefing Room',investigation:'Investigation',deduction:'Final deduction',feedback:'Host feedback',closed:'Case closed'})[state.phase];
   $('rejoin').textContent=privateCode?'Private rejoin code · '+privateCode:secret?'Rejoin with your existing code to receive a six-character code.':'';
-  const signature=JSON.stringify([state.phase,state.briefing,state.audit,state.outcome,state.reveal,state.players,state.player?.files]);
+  const signature=JSON.stringify([state.phase,state.briefing,state.audit,state.outcome,state.reveal,state.reaction,state.licences,state.players,state.player?.files]);
   if(signature!==lastControls){lastControls=signature;renderControls();}
   if(state.reaction?.active && activeReaction!==state.reaction.id){
     activeReaction=state.reaction.id;
-    play([reactionFiles[state.outcome]+'.mp4'],'Chief Vance',isHost?()=>update('reaction-shown',{id:activeReaction}):null);
+    void playEnding(activeReaction,state.outcome);
   }
   const files=JSON.stringify([state.player?.files,state.phase,state.audit]);
   if(files!==lastFiles && state.player){lastFiles=files;renderWorkspace(state.player);}
@@ -473,6 +562,9 @@ async function reviewJournals(){
 }
 function renderControls(){
   const controls=$('controls'), referenceOpen=controls.querySelector('.briefing-menu')?.open, mediaOpen=controls.querySelector('.briefing-menu details')?.open, documentsOpen=controls.querySelector('.host-documents')?.open;controls.replaceChildren();
+  const closed=state.phase==='closed'&&!state.reaction?.active;
+  $('workspace').hidden=closed;
+  if(closed){renderClosing(controls);return;}
   if(isHost && state.players){
     const covered=new Set(state.players.flatMap(p=>p.files)).size;
     const roster=make('section');roster.className='host-roster';
@@ -498,22 +590,27 @@ function renderControls(){
     }
     if(state.phase==='investigation'&&!state.audit)actions.append(button('Unlock audit after discussion of all six files',()=>update('audit')));
     if(state.phase==='investigation'&&state.audit)actions.append(button('Receive final deduction',()=>update('submit')));
-    if(state.phase==='deduction'){
-      for(const [label,outcome] of [['Correct','CORRECT'],['Wrong — Keep Investigating','WRONG_RETRY'],['Convict Anyway','CONVICT_ANYWAY']]){
-        actions.append(button(label,()=>update('outcome',{outcome})));
-      }
-    }
-    if(state.phase==='feedback') {
+    if(state.phase==='feedback'&&!state.reaction?.active) {
       controls.append(make('p','Use the Master Solution to explain a contradiction without revealing the answer.'));
-      actions.append(button('Replay wrong deduction reaction',()=>update('outcome',{outcome:'WRONG_RETRY'})),button('Resume investigation',()=>update('resume')));
+      actions.append(button('Replay wrong deduction reaction',()=>chooseOutcome('WRONG_RETRY')),button('Resume investigation',()=>update('resume')));
     }
-    if(state.phase==='closed'&&state.outcome==='CORRECT'&&!state.reveal)actions.append(button('Authorise solution reveal',()=>update('reveal')));
     if(actions.childElementCount){
       const stage=make('section');stage.className='host-stage';
       stage.append(make('h3','Session controls'),actions);controls.prepend(stage);
     }
     controls.append(roster);
-    const hostLinks=make('nav');hostLinks.append(link('Host briefing guide','host-guide.pdf'),link('Master Solution · Host only','solution.pdf'));const tools=make('details');
+    const hostLinks=make('nav');
+    const solution=button('Master Solution · Host only',()=>viewPdf('Master Solution · Host only','solution.pdf',{onViewed:()=>{
+      viewedSolutionRoom=room;
+      renderControls();
+    }}));
+    hostLinks.append(link('Host briefing guide','host-guide.pdf'),solution);
+    if(state.phase==='deduction'&&viewedSolutionRoom===room){
+      for(const [label,outcome] of [['Correct','CORRECT'],['Wrong — Keep Investigating','WRONG_RETRY'],['Convict Anyway','CONVICT_ANYWAY']]){
+        hostLinks.append(button(label,()=>chooseOutcome(outcome)));
+      }
+    }
+    const tools=make('details');
     tools.className='host-documents';tools.open=!!documentsOpen;
     tools.append(make('summary','Host documents'),hostLinks);controls.append(tools);
   }

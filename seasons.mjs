@@ -33,7 +33,7 @@ function journalEntry(data){
 const publicRoom = (room, guest, host) => ({
   phase:room.phase, code:room.code, edition:room.edition||null, audioV07:!!room.audioV07, briefing:room.briefing, audit:room.audit,
   outcome:room.outcome, reveal:room.reveal, reaction:room.reaction, expires:room.expires,
-  ...(host ? {terminalImages:room.edition==='terminal-v02'?[...terminalImages]:[],journalPrompts:Object.fromEntries(fileNumbers.map(file=>[file,journals[file-1][2]])),players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
+  ...(host ? {terminalImages:room.edition==='terminal-v02'?[...terminalImages]:[],journalPrompts:Object.fromEntries(fileNumbers.map(file=>[file,journals[file-1][2]])),licences:room.licences??{},players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
     : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),images:room.phase==='briefing'?[]:[...terminalImages].filter(name=>guest.files.includes(Number(name.slice(9,11)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
 });
 
@@ -194,6 +194,25 @@ async function route({db,env,session:readSession,limited},request) {
     const key=terminal&&(terminalPdfs.test(name)||terminalImages.has(name)||isTerminalBriefingAsset(name))
       ?terminalKey(name):(clip?.scope==='shared'?'shared':episode)+'/'+name;
     return bucket?fileResponse(bucket,key,request):error('Private media storage is not configured.',503);
+  }
+  if (action === 'redeem-licence' && post) {
+    if (await limited(request,'seasons-redeem')) return error('Too many attempts. Try again later.',429);
+    if (session?.role !== 'customer') return error('Sign in to redeem your licence.',401);
+    const {code} = await request.json();
+    if (!/^MAVEN-LICENCE-[A-F0-9]{64}$/.test(code||'')) return error('Invalid licence.');
+    const key = 'seasons:licence:'+await digest(code);
+    const expires = await db.transaction(async tx=>{
+      const entry = await tx.get(key);
+      if (!entry || entry.expires && entry.expires<=Date.now()) return null;
+      if (entry.member) return entry.member===session.userId ? entry.expires : null;
+      const until = entry.expires ?? yearFromNow();
+      const grantKey = 'seasons:product:'+session.userId;
+      const existing = await tx.get(grantKey);
+      if (!existing || existing.revoked || existing.expires<until) await tx.put(grantKey,{episode,expires:until});
+      await tx.put(key,{...entry,member:session.userId,expires:until});
+      return until;
+    });
+    return expires ? json({expires,destination:'/account#products/seasons'}) : error('Invalid, expired or already redeemed licence.',403);
   }
   if (action === 'redeem' && post) {
     if (await limited(request,'seasons-redeem')) return error('Too many attempts. Try again later.',429);
@@ -395,6 +414,19 @@ async function route({db,env,session:readSession,limited},request) {
           if (room.phase!=='feedback') return error('The investigation cannot be resumed now.',409);
           room.phase='investigation';
           break;
+        case 'licence': {
+          if (room.phase!=='closed'||room.reaction?.active) return error('Licences become available after the closing video.',409);
+          const player = room.players.find(p=>p.id===data.player);
+          if (!player || !['week','year'].includes(data.period)) return error('Choose a player and licence duration.');
+          room.licences ??= {};
+          if (room.licences[player.id]) break;
+          if (Object.keys(room.licences).length>=6) return error('This session has reached its licence limit.',409);
+          const code = 'MAVEN-LICENCE-'+token().toUpperCase();
+          const expires = data.period==='week'?Date.now()+7*86400000:null;
+          await tx.put('seasons:licence:'+await digest(code),{expires});
+          room.licences[player.id]={code,period:data.period,expires};
+          break;
+        }
         case 'reveal':
           if (room.phase!=='closed'||room.outcome!=='CORRECT') return error('Reveal is unavailable.',409);
           room.reveal=true;
