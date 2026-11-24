@@ -36,6 +36,32 @@ button[aria-pressed=true]{outline:2px solid #b79a68;outline-offset:2px}
 .case-panel h3{margin:0 0 .8rem;font-size:clamp(1.35rem,4vw,1.9rem)}
 .case-panel h4{margin:0 0 .55rem;color:#183c65}
 .case-panel section{margin-top:1rem}
+body:has(.player-session){background:#192932;color:#fff8e5}
+body:has(.player-session) header{background:#101b23;border-bottom:2px solid #b79a68}
+body:has(.player-session) main>h1{color:#fff8e5}
+.player-session #rejoin,.player-session #phase,body:has(.player-session) #status{color:#e2e9ea}
+.player-session #controls>details,.player-session #workspace>details{background:#2b4049;border-color:#a8976e;border-radius:.15rem}
+.player-session summary{color:#fff8e5;min-height:44px;align-content:center}
+.player-session details[open]>summary{color:#f1d79c}
+.player-session #controls nav details{background:#22343d}
+.terminal-selectors{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}
+.terminal-selectors select{min-width:0;color:#172831;background:#f4eddb;border-radius:.1rem}
+.terminal-selectors .case-picker{margin:.5rem 0;color:#fff8e5;min-width:0}
+.terminal-assignment{display:block;padding:.65rem;min-height:44px;border:1px solid #b79a68;background:#24353c}
+.player-session .case-panel{background:#253942;border-color:#a8976e;color:#fff8e5;border-radius:.15rem}
+.player-session .case-panel h3{color:#fff8e5}
+.mpd-paper{margin:.75rem 0;background:#f8efdc;color:#1b3039;padding:clamp(.75rem,3vw,1.5rem);border:double 4px #b79a68}
+.mpd-paper>strong{display:block;font:700 .8rem ui-monospace,monospace;letter-spacing:.07em;padding-bottom:.55rem;border-bottom:1px solid #b79a68}
+#pdf-view{border:3px double #b79a68;background:#f8efdc}
+#pdf-toolbar{background:#243841;color:#fff8e5}
+#pdf-title{color:#fff8e5}
+#pdf-pages{background:#ded2b8}
+#pdf-pages img{display:block;margin:auto;height:auto}
+#pdf-pages img[hidden]{display:none}
+.pdf-sheet{position:relative;margin:auto}
+.pdf-sheet .textLayer{position:absolute;inset:0;overflow:hidden;text-align:initial;transform-origin:0 0;line-height:1;z-index:1}
+.textLayer :is(span,br){color:transparent;position:absolute;white-space:pre;cursor:text;transform-origin:0 0}
+.textLayer ::selection{background:#456fa477}
 </style>
 </head>
 <body>
@@ -61,10 +87,11 @@ button[aria-pressed=true]{outline:2px solid #b79a68;outline-offset:2px}
       <button id="pdf-prev" type="button" disabled>Previous</button>
       <button id="pdf-next" type="button" disabled>Next</button>
       <button id="pdf-zoom" type="button" aria-pressed="false" disabled>Zoom in</button>
+      <button id="pdf-image" type="button" hidden>View exhibit image</button>
       <button id="pdf-close" type="button" autofocus>Close</button>
       <span id="pdf-status" role="status"></span>
     </div>
-    <div id="pdf-pages"><canvas hidden></canvas></div>
+    <div id="pdf-pages"><div class="pdf-sheet"><canvas hidden></canvas><div class="textLayer"></div></div><img hidden alt=""></div>
   </div>
 </dialog>
 <script type="module">
@@ -73,6 +100,7 @@ const $ = id=>document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const isHost = params.get('host')==='1';
 const isProduct = params.get('product')==='1';
+const terminalEdition = !isProduct && params.get('edition')==='terminal-v02';
 let room = params.get('room')||'', secret = '', privateCode = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
 let state, refreshing=false;
 const make = (tag,text) => {const e=document.createElement(tag);if(text)e.textContent=text;return e;};
@@ -84,7 +112,7 @@ function button(text,run) {
   return e;
 }
 const endpoint = (action, extra={})=>'/api/seasons/'+action+'?'+new URLSearchParams({room,...extra});
-const asset = name=>endpoint(isProduct?'product':'asset',{name});
+const asset = name=>endpoint(isProduct?'product':'asset',{name,...(terminalEdition?{edition:'terminal-v02'}:{})});
 async function api(action, payload) {
   const response=await fetch(endpoint(action),{method:payload?'POST':'GET',headers:{...(payload?{'content-type':'application/json'}:{}),...(secret?{'x-room-credential':secret}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
   const result=await response.json();
@@ -101,10 +129,15 @@ async function readAsset(name,signal) {
 }
 const pdfView=$('pdf-view');
 let pdfLibrary;
-async function viewPdf(title,name,{firstPage=1,lastPage}={}){
+async function viewPdf(title,name,{firstPage=1,lastPage,imageName}={}){
   const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
   const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
+  const image=pages.querySelector('img'), imageButton=$('pdf-image'), layer=pages.querySelector('.textLayer');
+  const sheet=layer.parentElement;
   const abort=new AbortController();
+  let imageUrl='', showingImage=false, textLayer;
+  sheet.hidden=false;image.hidden=true;layer.replaceChildren();
+  imageButton.hidden=!imageName;imageButton.textContent='View exhibit image';
   let loading, documentPdf, rendering, pageNumber=firstPage, enlarged=false;
   $('pdf-title').textContent=title;
   status.textContent='Loading document…';
@@ -114,7 +147,9 @@ async function viewPdf(title,name,{firstPage=1,lastPage}={}){
   previous.disabled=next.disabled=zoom.disabled=true;
   pdfView.addEventListener('close',()=>{
     abort.abort();
-    rendering?.cancel();
+    rendering?.cancel();textLayer?.cancel();
+    if(imageUrl)URL.revokeObjectURL(imageUrl);
+    image.removeAttribute('src');layer.replaceChildren();
     loading?.destroy().catch(()=>{});
     canvas.width=canvas.height=0;
   },{once:true});
@@ -130,6 +165,15 @@ async function viewPdf(title,name,{firstPage=1,lastPage}={}){
       canvas.style.width=width+'px';
       rendering=page.render({canvasContext:canvas.getContext('2d'),viewport});
       await rendering.promise;
+      if(terminalEdition&&!abort.signal.aborted){
+        const textViewport=page.getViewport({scale:width/page.getViewport({scale:1}).width});
+        sheet.style.width=width+'px';
+        layer.replaceChildren();
+        layer.style.setProperty('--scale-factor',textViewport.scale);
+        layer.style.setProperty('--total-scale-factor',textViewport.scale);
+        textLayer=new (await pdfLibrary).TextLayer({textContentSource:page.streamTextContent(),container:layer,viewport:textViewport});
+        await textLayer.render().catch(()=>{});
+      }
       if(abort.signal.aborted)return;
       canvas.hidden=false;pages.scrollTop=0;pages.scrollLeft=0;
       const endPage=Math.min(lastPage??documentPdf.numPages,documentPdf.numPages);
@@ -140,10 +184,30 @@ async function viewPdf(title,name,{firstPage=1,lastPage}={}){
   $('pdf-close').onclick=()=>pdfView.close();
   previous.onclick=()=>{pageNumber--;void draw();};
   next.onclick=()=>{pageNumber++;void draw();};
+  function sizeImage(){
+    image.style.width=(Math.max(1,pages.clientWidth-18)*(enlarged?1.75:1))+'px';
+  }
+  imageButton.onclick=async()=>{
+    imageButton.disabled=true;
+    try{
+      if(!imageUrl){
+        const blob=await (await readAsset(imageName,abort.signal)).blob();
+        if(abort.signal.aborted)return;
+        imageUrl=URL.createObjectURL(blob);
+        image.src=imageUrl;image.alt=title+' exhibit';
+      }
+      showingImage=!showingImage;
+      sheet.hidden=showingImage;image.hidden=!showingImage;
+      imageButton.textContent=showingImage?'Back to evidence page':'View exhibit image';
+      if(showingImage)sizeImage();
+      pages.scrollTop=pages.scrollLeft=0;
+    }catch(error){if(!abort.signal.aborted)status.textContent=error.message;}
+    finally{imageButton.disabled=false;}
+  };
   zoom.onclick=()=>{
     enlarged=!enlarged;
     zoom.textContent=enlarged?'Fit width':'Zoom in';zoom.setAttribute('aria-pressed',String(enlarged));
-    void draw();
+    if(showingImage)sizeImage();else void draw();
   };
   pdfView.showModal();
   try{
@@ -367,13 +431,24 @@ function renderWorkspace(player){
   const select=make('select'), picker=make('label','Assigned case file');
   picker.className='case-picker';
   picker.append(select);
-  if(player.files.length>1)cases.append(picker);
+  const selectors=make('div');selectors.className='terminal-selectors';
+  if(player.files.length>1)selectors.append(picker);
+  else{
+    const assigned=make('div');assigned.className='case-picker';
+    const value=make('span','Assigned Case '+String(player.files[0]).padStart(2,'0'));
+    value.className='terminal-assignment';
+    assigned.append(make('span','Case file'),value);selectors.append(assigned);
+  }
+  cases.append(selectors);
   const pane=make('div'), journal=make('section');
   pane.className='case-panel';
   cases.append(pane);
   if(state.audit)cases.append(link('Open Evidence Audit','audit.pdf'));
+  if(terminalEdition)journal.className='mpd-paper';
   journalMenu.append(journal);
+  let evidencePicker;
   function openFile(file){
+    evidencePicker?.remove();
     activeFile=file;
     select.value=String(file);
     pane.replaceChildren();pane.hidden=!file;
@@ -399,11 +474,16 @@ function renderWorkspace(player){
       if(!page)return;
       const label=evidence.selectedOptions[0].textContent;
       evidence.value='';
-      await viewPdf(title+' · '+label,'case-'+file+'.pdf',{firstPage:page,lastPage:page});
+      const imageName='evidence-'+String(file).padStart(2,'0')+'-'+String(page).padStart(2,'0')+'.png';
+      await viewPdf(title+' · '+label,'case-'+file+'.pdf',{firstPage:page,lastPage:page,
+        imageName:terminalEdition&&player.images?.includes(imageName)?imageName:undefined});
+
     });
-    pane.append(make('h3',title),evidenceLabel);
+    evidencePicker=evidenceLabel;selectors.append(evidencePicker);
+    pane.append(make('h3',title));
     const draftKey='journal:'+room+':'+secret+':'+file;
     const initial=JSON.parse(sessionStorage.getItem(draftKey)||'null')||state.player.journals[file]?.answers||[];
+    if(terminalEdition)journal.append(make('strong','MAVEN POLICE DEPARTMENT'));
     journal.append(make('h3','Investigation Journal '+file),make('p','Answer each prompt or explain what the evidence does not establish.'));
     const fields=prompts.map((prompt,index)=>{
       const label=make('label',prompt),input=make('textarea');input.maxLength=4000;input.value=initial[index]||'';input.disabled=state.phase==='closed';label.append(input);journal.append(label);return input;

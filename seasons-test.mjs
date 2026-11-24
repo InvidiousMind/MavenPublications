@@ -87,6 +87,8 @@ assert.equal((await call(path('product',{name:'case-1.pdf'}),{cookie:other})).st
 assert.equal((await assign(first,updated.accessRevision,[{key:'seasons:product',enabled:false}])).status,200);
 assert.equal((await call(path('product'),{cookie:host})).status,403);
 assert.equal((await accountDetails(first)).products.find(p=>p.key==='seasons:host').enabled,true);
+for (const name of ['case-1.pdf','evidence-01-02.png','evidence-06-04.png']) await upload('terminal-v02',name);
+assert.equal((await call(path('admin/asset',{group:'terminal-v02',slot:'S0001_E01',name:'solution.pdf'}),{cookie:admin,body:bytes})).status,400);
 await upload('shared',briefing[0].filename);
 await upload('episode',briefing[5].filename);
 for (const name of Object.values(reactionFiles)) await upload('shared',name+'.mp4');
@@ -122,6 +124,13 @@ assert.equal((await play(briefing[5].filename,{guest})).status,200);
 assert.equal((await play(transcript,{guest})).status,200);
 assert.equal((await command('briefing')).status,409);
 assert.equal((await command('start')).status,200);
+const edition='terminal-v02';
+const selectedAsset=(name, options={guest})=>within('asset',options,{name,edition});
+assert.equal((await selectedAsset('case-1.pdf')).status,200);
+assert.equal((await selectedAsset('case-2.pdf')).status,404);
+assert.equal((await selectedAsset('evidence-01-02.png')).headers.get('content-type'),'image/png');
+assert.equal((await selectedAsset('solution.pdf')).status,403);
+
 assert.equal((await play('audit.pdf',{guest})).status,403);
 const journal=(file,answers,complete)=>within('room',{guest,body:{type:'journal',file,answers,complete}});
 let state=await (await journal(1,['This is clear','Not established','My note','My question'],true)).json();
@@ -129,6 +138,9 @@ assert.equal(state.player.journals[1].complete,true);
 state=await (await journal(1,['This is clear','','My note','My question'],true)).json();
 assert.equal(state.player.journals[1].complete,false);
 assert.equal((await command('assign',{player:backup,files:[6]})).status,200);
+assert.equal((await selectedAsset('evidence-06-04.png')).status,403);
+assert.equal((await selectedAsset('evidence-06-04.png',{guest:replacement})).status,200);
+
 assert.equal((await play('case-6.pdf',{guest})).status,403);
 assert.equal((await play('case-6.pdf',{guest:replacement})).status,200);
 assert.equal((await within('join',{body:{rejoin:guest}})).status,403);

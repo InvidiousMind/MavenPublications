@@ -17,14 +17,14 @@ const digest = async value => Array.from(new Uint8Array(await crypto.subtle.dige
 const outcomes = ['CORRECT','WRONG_RETRY','CONVICT_ANYWAY'];
 const fileNumbers = [1,2,3,4,5,6];
 const documentSlots = ['start','audit','journals','solution','host-guide',...fileNumbers.map(n=>'case-'+n)];
-const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html)$/;
+const assetPattern = /^[a-zA-Z0-9_-]+\.(mp4|txt|json|pdf|html|png)$/;
 const isOpen = room => room && room.expires > Date.now();
 const canReadFile = (room, guest, file) => !!guest && guest.files.includes(file) && room.phase !== 'briefing';
 const publicRoom = (room, guest, host) => ({
   phase:room.phase, code:room.code, briefing:room.briefing, audit:room.audit,
   outcome:room.outcome, reveal:room.reveal, reaction:room.reaction, expires:room.expires,
   ...(host ? {players:room.players.map(({id,name,files,journals})=>({id,name,files,journals:Object.fromEntries(Object.entries(journals).map(([key,value])=>[key,value.complete]))}))}
-    : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
+    : {player:{name:guest.name,files:room.phase==='briefing'?[]:guest.files,journals:Object.fromEntries(Object.entries(guest.journals).filter(([file])=>guest.files.includes(Number(file)))),images:room.phase==='briefing'?[]:[...terminalImages].filter(name=>guest.files.includes(Number(name.slice(9,11)))),prompts:room.phase==='briefing'?{}:Object.fromEntries(guest.files.map(file=>[file,journals[file-1][2]]))}})
 });
 
 export async function seasonsHostAccess(db, session) {
@@ -44,8 +44,12 @@ function roomCode() {
   return Array.from(crypto.getRandomValues(new Uint8Array(6)), n=>alphabet[n % alphabet.length]).join('');
 }
 
+const terminalPdfs = /^(?:case-[1-6]|start|journals|audit)\.pdf$/;
+const terminalImages = new Set('01-02 01-04 01-05 01-09 02-02 02-03 02-04 02-05 02-06 02-09 03-02 03-03 03-08 04-03 05-02 05-03 05-04 05-06 05-10 06-02 06-04'.split(' ').map(id=>'evidence-'+id+'.png'));
+const terminalKey = name=>episode+'/terminal-v02/'+name;
 function storageKey(group, name, slot) {
   if (!assetPattern.test(name)) return null;
+  if (group === 'terminal-v02' && slot === episode && (terminalPdfs.test(name) || terminalImages.has(name))) return terminalKey(name);
   if (group === 'shared' && /\.(mp4|txt|json)$/.test(name)) return 'shared/'+name;
   if (group === 'episode' && /^S\d{4}_E\d{2}$|^special-[a-z0-9-]+$/.test(slot)) return slot+'/'+name;
   return null;
@@ -100,7 +104,7 @@ async function route({db,env,session:readSession,limited},request) {
       if (!key) return error('Invalid file location.');
       if (!post) return json({uploaded:!!await bucket.head(key)});
       if (!request.body || !Number.isSafeInteger(length) || length < 1 || length > 50*1024*1024) return error('Choose a supported file under 50 MB.');
-      const types = {mp4:'video/mp4',pdf:'application/pdf',txt:'text/plain; charset=utf-8',json:'application/json',html:'text/html; charset=utf-8'};
+      const types = {mp4:'video/mp4',pdf:'application/pdf',png:'image/png',txt:'text/plain; charset=utf-8',json:'application/json',html:'text/html; charset=utf-8'};
       const bytes = await request.arrayBuffer();
       if (bytes.byteLength!==length) return error('Incomplete file upload.');
       await bucket.put(key,bytes,{httpMetadata:{contentType:types[key.split('.').pop()]}});
@@ -231,8 +235,12 @@ async function route({db,env,session:readSession,limited},request) {
     if (action==='state') return json(publicRoom(room,guest,host));
     if (action!=='asset') return error('Unknown room action.',404);
     const name = url.searchParams.get('name')||'';
+    const terminal = url.searchParams.get('edition')==='terminal-v02';
     let objectKey;
-    if (documentSlots.some(slot=>name===slot+'.pdf') || ['host.html','player.html','journals.json'].includes(name)) {
+    if (terminal && terminalImages.has(name)) {
+      if (!host && !canReadFile(room,guest,Number(name.slice(9,11)))) return error('This material is restricted.',403);
+      objectKey = terminalKey(name);
+    } else if (documentSlots.some(slot=>name===slot+'.pdf') || ['host.html','player.html','journals.json'].includes(name)) {
       const file = /^case-([1-6])\.pdf$/.exec(name);
       const allowed = ['solution.pdf','host-guide.pdf','host.html'].includes(name) ? host
         : file ? host || canReadFile(room,guest,Number(file[1]))
@@ -240,7 +248,7 @@ async function route({db,env,session:readSession,limited},request) {
         : ['journals.pdf','journals.json'].includes(name) ? host
         : true;
       if (!allowed) return error('This material is restricted.',403);
-      objectKey = episode+'/'+name;
+      objectKey = terminal && terminalPdfs.test(name) ? terminalKey(name) : episode+'/'+name;
     } else {
       const selected = assetPattern.test(name);
       if (!selected) return error('Media unavailable.',404);
