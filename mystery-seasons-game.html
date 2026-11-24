@@ -25,6 +25,7 @@ import {briefing, transcript, credit, reactionFiles, caseTitles} from '/seasons-
 const $ = id=>document.getElementById(id);
 const params = new URLSearchParams(location.search);
 const isHost = params.get('host')==='1';
+const isProduct = params.get('product')==='1';
 let room = params.get('room')||'', secret = '', lastControls='', lastFiles='', activeReaction='', activeFile=null;
 let state, refreshing=false;
 const make = (tag,text) => {const e=document.createElement(tag);if(text)e.textContent=text;return e;};
@@ -36,7 +37,7 @@ function button(text,run) {
   return e;
 }
 const endpoint = (action, extra={})=>'/api/seasons/'+action+'?'+new URLSearchParams({room,...extra});
-const asset = name=>endpoint('asset',{name});
+const asset = name=>endpoint(isProduct?'product':'asset',{name});
 async function api(action, payload) {
   const response=await fetch(endpoint(action),{method:payload?'POST':'GET',headers:{...(payload?{'content-type':'application/json'}:{}),...(secret?{'x-room-credential':secret}:{})},...(payload?{body:JSON.stringify(payload)}:{})});
   const result=await response.json();
@@ -180,7 +181,16 @@ function renderWorkspace(player){
   for(const file of player.files)nav.append(button('Case File '+file,()=>openFile(file)));
   openFile(player.files.includes(activeFile)?activeFile:player.files[0]);
 }
-if(isHost){
+if(isProduct){
+  safely(async()=>{
+    const materials=await api('product');
+    const entry=$('entry');
+    entry.append(make('h2','Episode materials'),link('Start Here','start.pdf'),link('Investigation Journals','journals.pdf'));
+    for(let i=1;i<=6;i++)entry.append(link('Case File '+i,'case-'+i+'.pdf'));
+    entry.append(showText('Briefing transcript',materials.transcript),showText('Music credit',materials.credit));
+    for(const clip of materials.clips)entry.append(link(clip.label,clip.filename));
+  })();
+}else if(isHost){
   $('entry').append(button('Begin Hosting a Live Session',async()=>{const result=await api('create',{});setRoom(result.code);}));
 }else{
   const form=make('form');

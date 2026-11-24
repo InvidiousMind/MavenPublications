@@ -1,6 +1,6 @@
 import { journals } from './seasons-journals.mjs';
 const episode = 'S0001_E01';
-function yearFromNow() {
+export function yearFromNow() {
   const date = new Date();
   const month = date.getUTCMonth();
   date.setUTCFullYear(date.getUTCFullYear()+1);
@@ -30,7 +30,13 @@ const publicRoom = (room, guest, host) => ({
 export async function seasonsHostAccess(db, session) {
   if (session?.role !== 'customer') return null;
   const grant = await db.get('seasons:host:'+session.userId);
-  return grant?.expires > Date.now() ? grant : null;
+  return grant?.expires > Date.now() && !grant.revoked ? grant : null;
+}
+
+export async function seasonsProductAccess(db, session) {
+  if (session?.role !== 'customer') return null;
+  const grant = await db.get('seasons:product:'+session.userId);
+  return grant?.expires > Date.now() && !grant.revoked ? grant : null;
 }
 
 function roomCode() {
@@ -116,6 +122,18 @@ async function route({db,env,session:readSession,limited},request) {
     const expires = yearFromNow();
     await db.put('seasons:host:'+data.member,{episode,expires});
     return json({expires});
+  }
+  if (action === 'product' && !post) {
+    if (!await seasonsProductAccess(db,session)) return error('Active Episode 1 product access required.',403);
+    const {briefing, transcript, credit} = await import('./seasons-content.mjs');
+    const clips = briefing.filter(clip=>clip.review_after_briefing);
+    const name = url.searchParams.get('name');
+    if (!name) return json({clips,transcript,credit});
+    const playerFiles = ['start.pdf','journals.pdf',...fileNumbers.map(n=>'case-'+n+'.pdf'),transcript,credit];
+    if (!playerFiles.includes(name) && !clips.some(clip=>clip.filename===name)) {
+      return error('This material is restricted.',403);
+    }
+    return bucket ? fileResponse(bucket,episode+'/'+name,request) : error('Private media storage is not configured.',503);
   }
   if (action === 'redeem' && post) {
     if (await limited(request,'seasons-redeem')) return error('Too many attempts. Try again later.',429);
