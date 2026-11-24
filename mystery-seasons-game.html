@@ -6,7 +6,7 @@
 <link rel="icon" href="/maven-icon.svg" type="image/svg+xml">
 <title>The Last Loan | MAVEN Mystery Seasons</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:1rem}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere} @media(max-width:720px){.workspace{display:block}.workspace[data-tab="journal"] .evidence,.workspace[data-tab="evidence"] .journal{display:none}}@media(min-width:721px){.mobile-tabs{display:none}}
+*{box-sizing:border-box}body{margin:0;background:#fdfbf5;color:#222334;font:16px system-ui}header{padding:1rem 5%;background:#183c65;color:white;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}header a{color:white}main{max-width:1200px;margin:2rem auto;padding:0 1rem}h1,h2,h3{font-family:Georgia,serif;color:#183c65}button,input,textarea{font:inherit;padding:.65rem;border:1px solid #183c65;border-radius:.25rem}button{background:#183c65;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:default}label{display:block;margin:.6rem 0}fieldset,article,details{border:1px solid #b79a68;padding:1rem;margin:1rem 0}legend{font-weight:bold}a{color:#183c65}video{width:100%;max-width:900px;background:#152238}nav{display:flex;gap:.6rem;flex-wrap:wrap}textarea{width:100%;min-height:5rem}.status{min-height:1.5rem;color:#183c65}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}.actions{display:flex;gap:.5rem;flex-wrap:wrap}.rejoin{overflow-wrap:anywhere}
 #briefing-view{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:#080b10;color:white;overflow:hidden}
 #briefing-view::backdrop{background:#080b10}
 #briefing-view video,#briefing-view canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;object-fit:contain;background:#080b10;pointer-events:none}
@@ -20,6 +20,7 @@
 #pdf-pages{height:100%;overflow:auto;padding:.5rem;background:#dce2e9;touch-action:pan-x pan-y pinch-zoom}
 #pdf-pages canvas{display:block;margin:auto;background:white}
 #pdf-layout{display:flex;flex-direction:column;height:100%;min-height:0}
+button[aria-pressed=true]{outline:2px solid #b79a68;outline-offset:2px}
 </style>
 </head>
 <body>
@@ -85,15 +86,16 @@ async function readAsset(name,signal) {
 }
 const pdfView=$('pdf-view');
 let pdfLibrary;
-async function viewPdf(title,name){
+async function viewPdf(title,name,{firstPage=1,lastPage}={}){
   const status=$('pdf-status'), canvas=pdfView.querySelector('canvas'), pages=$('pdf-pages');
   const previous=$('pdf-prev'), next=$('pdf-next'), zoom=$('pdf-zoom');
   const abort=new AbortController();
-  let loading, documentPdf, rendering, pageNumber=1, enlarged=false;
+  let loading, documentPdf, rendering, pageNumber=firstPage, enlarged=false;
   $('pdf-title').textContent=title;
   status.textContent='Loading document…';
   canvas.hidden=true;
   zoom.textContent='Zoom in';zoom.setAttribute('aria-pressed','false');
+  previous.hidden=next.hidden=firstPage===lastPage;
   previous.disabled=next.disabled=zoom.disabled=true;
   pdfView.addEventListener('close',()=>{
     abort.abort();
@@ -115,8 +117,9 @@ async function viewPdf(title,name){
       await rendering.promise;
       if(abort.signal.aborted)return;
       canvas.hidden=false;pages.scrollTop=0;pages.scrollLeft=0;
-      status.textContent='Page '+pageNumber+' of '+documentPdf.numPages;
-      previous.disabled=pageNumber===1;next.disabled=pageNumber===documentPdf.numPages;zoom.disabled=false;
+      const endPage=Math.min(lastPage??documentPdf.numPages,documentPdf.numPages);
+      status.textContent=firstPage===lastPage?'Evidence page '+pageNumber:'Page '+pageNumber+' of '+endPage;
+      previous.disabled=pageNumber<=firstPage;next.disabled=pageNumber>=endPage;zoom.disabled=false;
     }catch(error){if(!abort.signal.aborted)status.textContent='This page could not be displayed.';}
   }
   $('pdf-close').onclick=()=>pdfView.close();
@@ -320,15 +323,28 @@ function renderWorkspace(player){
   const root=$('workspace');root.replaceChildren();
   if(!player.files.length){root.append(make('p','Your assigned case files will open when the host starts the investigation.'));return;}
   const nav=make('nav');root.append(nav);
-  const pane=make('div');pane.className='workspace';pane.dataset.tab='evidence';
-  const tabs=make('nav');tabs.className='mobile-tabs';
-  tabs.append(button('Evidence',()=>{pane.dataset.tab='evidence';}),button('Journal',()=>{pane.dataset.tab='journal';}));
-  root.append(tabs,pane);
+  const pane=make('article');
+  root.append(pane);
   function openFile(file){
     activeFile=file;
-    const [,title]=caseTitles[file-1], prompts=player.prompts[file], evidence=make('article'),journal=make('article');
-    evidence.className='evidence';journal.className='journal';
-      evidence.append(make('h3',title),button('Open case file',()=>viewPdf(title,'case-'+file+'.pdf')));
+    for(const tab of nav.querySelectorAll('button'))tab.setAttribute('aria-pressed',String(Number(tab.dataset.file)===file));
+    const [,title]=caseTitles[file-1], prompts=player.prompts[file], journal=make('section');
+    const submenu=make('nav');
+    submenu.setAttribute('aria-label','Case File '+file+' contents');
+    for(let page=1;page<=10;page++){
+      const label='Evidence '+String(page).padStart(2,'0');
+      submenu.append(button(label,()=>viewPdf(title+' · '+label,'case-'+file+'.pdf',{firstPage:page,lastPage:page})));
+    }
+    journal.hidden=true;
+    const journalButton=button('Investigation Journal',()=>{
+      journal.hidden=!journal.hidden;
+      journalButton.setAttribute('aria-expanded',String(!journal.hidden));
+      if(!journal.hidden)journal.querySelector('textarea')?.focus();
+    });
+    journal.id='case-journal-'+file;
+    journalButton.setAttribute('aria-controls',journal.id);
+    journalButton.setAttribute('aria-expanded','false');
+    submenu.append(journalButton);
     const draftKey='journal:'+room+':'+secret+':'+file;
     const initial=JSON.parse(sessionStorage.getItem(draftKey)||'null')||state.player.journals[file]?.answers||[];
     journal.append(make('h3','Investigation Journal '+file),make('p','Answer each prompt or explain what the evidence does not establish.'));
@@ -345,9 +361,13 @@ function renderWorkspace(player){
     };
     for(const input of fields)input.oninput=()=>sessionStorage.setItem(draftKey,JSON.stringify(values()));
     if(state.phase!=='closed')journal.append(button('Save draft',()=>save(false)),button('Mark complete',()=>save(true)));
-    pane.replaceChildren(evidence,journal);
+    pane.replaceChildren(make('h3',title),submenu,journal);
   }
-  for(const file of player.files)nav.append(button('Case File '+file,()=>openFile(file)));
+  for(const file of player.files){
+    const tab=button('Case File '+file,()=>openFile(file));
+    tab.dataset.file=file;
+    nav.append(tab);
+  }
   openFile(player.files.includes(activeFile)?activeFile:player.files[0]);
 }
 if(isProduct){
